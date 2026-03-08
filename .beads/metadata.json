@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "sitrep",
+  "project_id": "c1053723-66b8-49d3-a65d-683b4d4e3d31"
+}
