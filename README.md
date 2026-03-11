@@ -179,30 +179,31 @@ SitRep is one component in the OpenSRM ecosystem. Each component solves a comple
          │+cost     │ │          │ │          │ │          │
          └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
               │             │             │             │
-              └──────┬──────┴──────┬──────┘             │
-                     ▼             ▼                    ▼
-              ┌────────────────────────────┐  ┌──────────────┐
-              │  Streaming / Queue Layer   │  │  Consumes    │
-              │  (Kafka / NATS / etc)      │  │  all three   │
-              └──────────┬─────────────────┘  └──────┬───────┘
-                         ▼                           │
-              ┌────────────────────────┐             │
-              │   OTel Collector /     │             │
-              │   Prometheus / etc     │             │
-              └────────────────────────┘             │
-                                                     │
-              ┌──────────────────────────────────────┘
-              │  Learning loop (post-incident):
-              │  Mayday findings → manifest updates
-              │  → NthLayer regenerates → Arbiter
-              │  refines → SitRep improves
-              └──────────────────────────────────────▶ OpenSRM
+              └─────────────┴──────┬──────┴─────────────┘
+                                   ▼
+                     ┌──────────────────────────┐
+                     │      Verdict Store       │
+                     │  (shared data substrate) │
+                     │ create · resolve · link  │
+                     │ accuracy · gaming-check  │
+                     └────────────┬─────────────┘
+                                  │ OTel side-effects
+                                  ▼
+                     ┌──────────────────────────┐
+                     │    OTel Collector /      │
+                     │   Prometheus / Grafana   │
+                     └──────────────────────────┘
+
+              Learning loop (post-incident):
+              Mayday findings → manifest updates
+              → NthLayer regenerates → Arbiter
+              refines → SitRep improves → OpenSRM
 ```
 
 **How SitRep fits in:**
 
-- SitRep consumes **quality scores from the Arbiter** and correlates them with other signals (deployments, config changes, model version swaps) to identify what caused quality degradation
-- SitRep produces **situational snapshots that Mayday consumes** as the starting context for incident response, so Mayday's agents begin with a correlated picture rather than raw signals
+- SitRep emits **correlation verdicts** for every correlation assessment, stored in the shared Verdict Store. Mayday consumes these verdicts (with confidence scores and lineage) as the starting context for incident response — no direct coupling between components.
+- SitRep consumes **Arbiter quality verdicts** as events and correlates them with other signals (deployments, config changes, model version swaps) to identify what caused quality degradation
 - SitRep reads **service topology from OpenSRM manifests** (via NthLayer's topology export) to understand dependency relationships when correlating
 - SitRep's **correlation accuracy improves over time** as the learning loop feeds post-incident findings back into its models
 
@@ -211,6 +212,7 @@ Each component works alone. Someone who just needs signal correlation adopts Sit
 | Component | What it does | Link |
 |-----------|-------------|------|
 | **OpenSRM** | Specification for declaring service reliability requirements | [opensrm](https://github.com/rsionnach/opensrm) |
+| **Verdict** | Data primitive for recording AI judgments and measuring correctness | [verdicts](https://github.com/rsionnach/verdicts) |
 | **Arbiter** | Quality measurement and governance for AI agents | [arbiter](https://github.com/rsionnach/arbiter) |
 | **NthLayer** | Generate monitoring infrastructure from manifests | [nthlayer](https://github.com/rsionnach/nthlayer) |
 | **SitRep** | Situational awareness through signal correlation (this repo) | [sitrep](https://github.com/rsionnach/sitrep) |
