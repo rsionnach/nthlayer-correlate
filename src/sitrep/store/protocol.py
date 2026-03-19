@@ -37,7 +37,8 @@ class EventStore(Protocol):
     ) -> list[SitRepEvent]: ...
 
     def get_recent_changes(
-        self, service: str, window_minutes: int = 30
+        self, service: str, window_minutes: int = 30,
+        reference_time: str | None = None,
     ) -> list[SitRepEvent]: ...
 
     def expire_old(self) -> int: ...

@@ -32,8 +32,15 @@ def find_change_candidates(
         # Parse group's first event timestamp for proximity calculation
         group_first_ts = _parse_ts(group.time_window[0])
 
+        # Use the group's first event as reference time for "recent" lookback.
+        # This is essential for replay with historical timestamps — without it,
+        # get_recent_changes uses datetime('now') and finds nothing.
+        reference_time = group.time_window[0]
+
         # Check for changes on the same service
-        same_service_changes = store.get_recent_changes(service, window_minutes)
+        same_service_changes = store.get_recent_changes(
+            service, window_minutes, reference_time=reference_time
+        )
         for change in same_service_changes:
             change_ts = _parse_ts(change.timestamp)
             proximity = abs((group_first_ts - change_ts).total_seconds())
@@ -52,7 +59,9 @@ def find_change_candidates(
             svc_info = topology.get(service, {})
             dependencies = svc_info.get("dependencies", [])
             for dep_service in dependencies:
-                dep_changes = store.get_recent_changes(dep_service, window_minutes)
+                dep_changes = store.get_recent_changes(
+                    dep_service, window_minutes, reference_time=reference_time
+                )
                 for change in dep_changes:
                     change_ts = _parse_ts(change.timestamp)
                     proximity = abs((group_first_ts - change_ts).total_seconds())

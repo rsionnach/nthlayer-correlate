@@ -355,17 +355,39 @@ class SQLiteEventStore:
         return result
 
     def get_recent_changes(
-        self, service: str, window_minutes: int = 30
+        self, service: str, window_minutes: int = 30,
+        reference_time: str | None = None,
     ) -> list[SitRepEvent]:
-        """Get recent change events for a service using the partial index."""
-        sql = """\
-            SELECT * FROM events
-            WHERE type = 'change'
-              AND service = ?
-              AND timestamp >= datetime('now', ? || ' minutes')
-            ORDER BY timestamp DESC
+        """Get recent change events for a service.
+
+        Args:
+            service: Service name to query changes for.
+            window_minutes: How far back to look.
+            reference_time: ISO 8601 timestamp to use as "now".
+                            Defaults to actual current time if None.
+                            Essential for replay with historical timestamps.
         """
-        rows = self._conn.execute(sql, (service, f"-{window_minutes}")).fetchall()
+        if reference_time is not None:
+            sql = """\
+                SELECT * FROM events
+                WHERE type = 'change'
+                  AND service = ?
+                  AND timestamp >= datetime(?, ? || ' minutes')
+                  AND timestamp <= ?
+                ORDER BY timestamp DESC
+            """
+            rows = self._conn.execute(
+                sql, (service, reference_time, f"-{window_minutes}", reference_time)
+            ).fetchall()
+        else:
+            sql = """\
+                SELECT * FROM events
+                WHERE type = 'change'
+                  AND service = ?
+                  AND timestamp >= datetime('now', ? || ' minutes')
+                ORDER BY timestamp DESC
+            """
+            rows = self._conn.execute(sql, (service, f"-{window_minutes}")).fetchall()
         return [self._row_to_event(row) for row in rows]
 
     def expire_old(self) -> int:
