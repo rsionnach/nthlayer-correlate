@@ -4,13 +4,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sitrep.correlation.changes import find_change_candidates
-from sitrep.correlation.dedup import deduplicate
-from sitrep.correlation.temporal import group_temporal
-from sitrep.correlation.topology import group_topology
-from sitrep.ingestion.severity import pre_score
-from sitrep.store.protocol import EventStore
-from sitrep.types import ChangeCandidate, CorrelationGroup, EventType, TemporalGroup
+from nthlayer_correlate.correlation.changes import find_change_candidates
+from nthlayer_correlate.correlation.dedup import deduplicate
+from nthlayer_correlate.correlation.temporal import group_temporal
+from nthlayer_correlate.correlation.topology import group_topology
+from nthlayer_correlate.ingestion.severity import pre_score
+from nthlayer_correlate.store.protocol import EventStore
+from nthlayer_correlate.types import ChangeCandidate, CorrelationGroup, EventType, TemporalGroup
 
 
 class CorrelationEngine:

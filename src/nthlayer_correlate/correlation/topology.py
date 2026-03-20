@@ -1,7 +1,7 @@
 """Topology-aware grouping. Deterministic transport."""
 from __future__ import annotations
 
-from sitrep.types import TemporalGroup, TopologyCorrelation
+from nthlayer_correlate.types import TemporalGroup, TopologyCorrelation
 
 
 def _get_tier_rank(topology: dict, service: str) -> int:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sitrep.types import SitRepEvent, TemporalGroup
+from nthlayer_correlate.types import SitRepEvent, TemporalGroup
 
 
 def _parse_ts(ts: str) -> datetime:

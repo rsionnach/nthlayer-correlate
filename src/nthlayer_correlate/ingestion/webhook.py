@@ -7,8 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
 
-from sitrep.ingestion import severity as _severity
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.ingestion import severity as _severity
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 _MAX_HEADER_SIZE = 65_536   # 64 KB
 _MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB

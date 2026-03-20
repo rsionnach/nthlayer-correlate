@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sitrep.types import AgentState, CorrelationGroup
+from nthlayer_correlate.types import AgentState, CorrelationGroup
 
 
 class StateMachine:

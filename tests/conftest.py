@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import pytest
-from sitrep.store.sqlite import SQLiteEventStore
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.store.sqlite import SQLiteEventStore
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 
 @pytest.fixture

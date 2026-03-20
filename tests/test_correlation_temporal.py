@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import pytest
-from sitrep.correlation.temporal import group_temporal
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.correlation.temporal import group_temporal
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 
 def _make_event(service="api", ts="2026-03-01T14:00:00Z", severity=0.5):

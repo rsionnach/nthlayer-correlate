@@ -6,7 +6,7 @@ import json
 import sqlite3
 from typing import Any
 
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS events (

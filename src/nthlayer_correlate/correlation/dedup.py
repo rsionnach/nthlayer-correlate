@@ -1,7 +1,7 @@
 """Signal deduplication. Deterministic transport."""
 from __future__ import annotations
 
-from sitrep.types import SitRepEvent
+from nthlayer_correlate.types import SitRepEvent
 
 
 def _dedup_key(event: SitRepEvent) -> str:

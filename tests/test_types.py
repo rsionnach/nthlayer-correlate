@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from sitrep.types import (
+from nthlayer_correlate.types import (
     AgentState,
     ChangeCandidate,
     CorrelationGroup,

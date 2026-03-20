@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 
 class EventStore(Protocol):

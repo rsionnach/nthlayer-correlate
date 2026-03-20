@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import pytest
-from sitrep.ingestion.webhook import WebhookIngester
-from sitrep.types import EventType
+from nthlayer_correlate.ingestion.webhook import WebhookIngester
+from nthlayer_correlate.types import EventType
 
 
 class TestWebhookIngester:

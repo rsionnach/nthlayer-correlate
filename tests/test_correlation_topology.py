@@ -1,8 +1,8 @@
 """Tests for topology-aware grouping."""
 from __future__ import annotations
 
-from sitrep.correlation.topology import group_topology
-from sitrep.types import EventType, SitRepEvent, TemporalGroup
+from nthlayer_correlate.correlation.topology import group_topology
+from nthlayer_correlate.types import EventType, SitRepEvent, TemporalGroup
 
 
 def _make_event(service="api", ts="2026-03-01T14:00:00Z", severity=0.5, etype=EventType.ALERT):

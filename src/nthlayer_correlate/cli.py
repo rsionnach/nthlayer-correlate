@@ -15,18 +15,18 @@ from typing import Any
 import structlog
 import yaml
 
-from sitrep.config import SitRepConfig, load_config
-from sitrep.correlation.changes import find_change_candidates
-from sitrep.correlation.dedup import deduplicate
-from sitrep.correlation.engine import CorrelationEngine
-from sitrep.correlation.temporal import group_temporal
-from sitrep.correlation.topology import group_topology
-from sitrep.ingestion.severity import pre_score
-from sitrep.snapshot.generator import SnapshotBudget, SnapshotGenerator
-from sitrep.snapshot.model import ModelInterface
-from sitrep.state import StateMachine
-from sitrep.store.sqlite import SQLiteEventStore
-from sitrep.types import AgentState, CorrelationGroup, EventType, SitRepEvent
+from nthlayer_correlate.config import SitRepConfig, load_config
+from nthlayer_correlate.correlation.changes import find_change_candidates
+from nthlayer_correlate.correlation.dedup import deduplicate
+from nthlayer_correlate.correlation.engine import CorrelationEngine
+from nthlayer_correlate.correlation.temporal import group_temporal
+from nthlayer_correlate.correlation.topology import group_topology
+from nthlayer_correlate.ingestion.severity import pre_score
+from nthlayer_correlate.snapshot.generator import SnapshotBudget, SnapshotGenerator
+from nthlayer_correlate.snapshot.model import ModelInterface
+from nthlayer_correlate.state import StateMachine
+from nthlayer_correlate.store.sqlite import SQLiteEventStore
+from nthlayer_correlate.types import AgentState, CorrelationGroup, EventType, SitRepEvent
 
 logger = structlog.get_logger()
 
@@ -226,7 +226,7 @@ def _assemble_groups(
     Mirrors the assembly logic in CorrelationEngine.correlate().
     """
     import uuid
-    from sitrep.types import ChangeCandidate, TemporalGroup
+    from nthlayer_correlate.types import ChangeCandidate, TemporalGroup
 
     assigned: set[int] = set()
     correlation_groups: list[CorrelationGroup] = []
@@ -369,7 +369,7 @@ def status_command(config_path: str | None, store_dir: str | None = None) -> int
 
 async def _serve_loop(config: SitRepConfig) -> None:
     """Run the full serve pipeline."""
-    from sitrep.ingestion.webhook import WebhookIngester
+    from nthlayer_correlate.ingestion.webhook import WebhookIngester
 
     store = SQLiteEventStore(config.store_path)
     ingester = WebhookIngester(config.ingestion_host, config.ingestion_port)
@@ -403,7 +403,7 @@ async def _serve_loop(config: SitRepConfig) -> None:
     # Optionally open verdict store
     verdict_store = None
     try:
-        from verdict.store import VerdictStore
+        from nthlayer_learn.store import VerdictStore
         verdict_store = VerdictStore(config.verdict_store_path)
     except Exception:
         logger.info("verdict_store_not_available")
@@ -469,7 +469,7 @@ def serve_command(config_path: str | None) -> int:
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        prog="sitrep",
+        prog="nthlayer-correlate",
         description="SitRep — Situational awareness through automated signal correlation",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")

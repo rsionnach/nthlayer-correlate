@@ -5,9 +5,9 @@ import yaml
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from sitrep.correlation.engine import CorrelationEngine
-from sitrep.store.sqlite import SQLiteEventStore
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.correlation.engine import CorrelationEngine
+from nthlayer_correlate.store.sqlite import SQLiteEventStore
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 
 def _load_scenario(name: str) -> dict:

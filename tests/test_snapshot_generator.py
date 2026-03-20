@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import time
 import pytest
-from sitrep.snapshot.generator import SnapshotGenerator, SnapshotBudget
-from sitrep.types import AgentState, CorrelationGroup, ChangeCandidate, SitRepEvent, EventType
+from nthlayer_correlate.snapshot.generator import SnapshotGenerator, SnapshotBudget
+from nthlayer_correlate.types import AgentState, CorrelationGroup, ChangeCandidate, SitRepEvent, EventType
 
 
 def _make_group(priority: int = 3, services: list[str] | None = None,

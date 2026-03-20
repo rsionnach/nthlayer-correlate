@@ -1,8 +1,8 @@
 """Tests for signal deduplication."""
 from __future__ import annotations
 
-from sitrep.correlation.dedup import deduplicate
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.correlation.dedup import deduplicate
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 
 def _make_alert(service="api", alert_name="latency", ts="2026-03-01T14:00:00Z", env="prod"):

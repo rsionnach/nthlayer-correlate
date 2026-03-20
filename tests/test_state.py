@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import pytest
-from sitrep.state import StateMachine
-from sitrep.types import AgentState, CorrelationGroup
+from nthlayer_correlate.state import StateMachine
+from nthlayer_correlate.types import AgentState, CorrelationGroup
 
 
 def _make_group(priority: int = 3) -> CorrelationGroup:
@@ -119,14 +119,14 @@ class TestStateMachine:
 
 class TestLoadConfig:
     def test_default_config(self):
-        from sitrep.config import SitRepConfig
+        from nthlayer_correlate.config import SitRepConfig
         config = SitRepConfig()
         assert config.store_path == "sitrep-events.db"
         assert config.ingestion_port == 8081
         assert config.watching_interval == 300
 
     def test_load_from_yaml(self, tmp_path):
-        from sitrep.config import load_config
+        from nthlayer_correlate.config import load_config
         config_file = tmp_path / "test-sitrep.yaml"
         config_file.write_text("""
 store:
@@ -142,6 +142,6 @@ state:
         assert config.watching_interval == 600
 
     def test_load_missing_file_returns_defaults(self):
-        from sitrep.config import load_config
+        from nthlayer_correlate.config import load_config
         config = load_config(None)
         assert config.store_path == "sitrep-events.db"

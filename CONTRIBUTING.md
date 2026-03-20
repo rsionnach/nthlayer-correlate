@@ -1,6 +1,6 @@
 # Contributing to SitRep
 
-Thanks for your interest in contributing to SitRep. This project is part of the [OpenSRM ecosystem](https://github.com/rsionnach/opensrm), and contributions of all kinds are welcome, whether that's bug reports, documentation improvements, feature proposals, or code.
+Thanks for your interest in contributing to SitRep. This project is part of the [OpenSRM ecosystem](https://github.com/rsionnach/nthlayer-spec), and contributions of all kinds are welcome, whether that's bug reports, documentation improvements, feature proposals, or code.
 
 ## Getting Started
 
@@ -12,7 +12,7 @@ Thanks for your interest in contributing to SitRep. This project is part of the 
 
 ## Shared Conventions
 
-SitRep follows the [OpenSRM specification](https://github.com/rsionnach/opensrm) for manifest formats, semantic conventions, and telemetry standards. If your contribution touches how SitRep reads manifests, consumes change events, or emits telemetry, please review the spec first to ensure alignment.
+SitRep follows the [OpenSRM specification](https://github.com/rsionnach/nthlayer-spec) for manifest formats, semantic conventions, and telemetry standards. If your contribution touches how SitRep reads manifests, consumes change events, or emits telemetry, please review the spec first to ensure alignment.
 
 SitRep follows [Zero Framework Cognition](ZFC.md) as its core architectural principle. Transport (ingesting signals, grouping them, windowing, counting) belongs in code. Judgment (interpreting what correlations mean, assessing causal relationships, recommending actions) belongs to the model. If you're unsure whether something is transport or judgment, check the ZFC document or open an issue to discuss.
 

@@ -6,8 +6,8 @@ import json
 import time
 from dataclasses import dataclass
 
-from sitrep.snapshot.token import CharDivFourEstimator, TokenEstimator
-from sitrep.types import AgentState, CorrelationGroup
+from nthlayer_correlate.snapshot.token import CharDivFourEstimator, TokenEstimator
+from nthlayer_correlate.types import AgentState, CorrelationGroup
 
 
 @dataclass

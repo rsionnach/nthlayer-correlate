@@ -1,7 +1,7 @@
 """Tests for severity pre-scoring."""
 from __future__ import annotations
-from sitrep.ingestion.severity import pre_score
-from sitrep.types import EventType, SitRepEvent
+from nthlayer_correlate.ingestion.severity import pre_score
+from nthlayer_correlate.types import EventType, SitRepEvent
 
 
 def _make_event(value=None, threshold=None, severity=0.5):

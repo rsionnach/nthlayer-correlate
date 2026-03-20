@@ -1,6 +1,6 @@
 """Severity pre-scoring from SLO targets. Pure arithmetic, no judgment."""
 from __future__ import annotations
-from sitrep.types import SitRepEvent
+from nthlayer_correlate.types import SitRepEvent
 
 
 def pre_score(event: SitRepEvent, slo_targets: dict | None) -> float:

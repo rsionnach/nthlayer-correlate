@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sitrep.store.protocol import EventStore
-from sitrep.types import ChangeCandidate, TemporalGroup
+from nthlayer_correlate.store.protocol import EventStore
+from nthlayer_correlate.types import ChangeCandidate, TemporalGroup
 
 
 def _parse_ts(ts: str) -> datetime:

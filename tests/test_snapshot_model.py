@@ -5,8 +5,8 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from sitrep.snapshot.model import ModelInterface
-from sitrep.types import CorrelationGroup
+from nthlayer_correlate.snapshot.model import ModelInterface
+from nthlayer_correlate.types import CorrelationGroup
 
 
 def _make_group(group_id="cg-001", services=None, priority=1):

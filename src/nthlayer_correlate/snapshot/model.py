@@ -5,7 +5,7 @@ import json
 import structlog
 from typing import Any
 
-from sitrep.types import CorrelationGroup
+from nthlayer_correlate.types import CorrelationGroup
 
 logger = structlog.get_logger()
 
@@ -33,7 +33,7 @@ class ModelInterface:
         Returns list of Verdict objects (children + parent).
         If model call fails, returns template-based verdicts with confidence 0.0.
         """
-        from verdict import create as verdict_create
+        from nthlayer_learn import create as verdict_create
 
         try:
             response = await self._call_model(prompt)
@@ -161,7 +161,7 @@ Respond with ONLY valid JSON in this format:
 
     def _create_template_verdicts(self, groups: list[CorrelationGroup]) -> list:
         """Degraded mode: template-based verdicts with confidence 0.0."""
-        from verdict import create as verdict_create
+        from nthlayer_learn import create as verdict_create
 
         child_verdicts = []
         for group in groups:

@@ -2,7 +2,7 @@
 
 **Situational awareness through automated signal correlation.**
 
-[![Status: Architecture](https://img.shields.io/badge/Status-Architecture-blue?style=for-the-badge)](https://github.com/rsionnach/sitrep)
+[![Status: Architecture](https://img.shields.io/badge/Status-Architecture-blue?style=for-the-badge)](https://github.com/rsionnach/nthlayer-correlate)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge)](LICENSE)
 
 Enterprise-scale distributed systems produce an enormous volume of observability signals: metrics at 15-second intervals across thousands of services, structured logs on every request, distributed traces, alerts from multiple monitoring systems, change events from CI/CD pipelines, feature flag changes, and infrastructure scaling events. This is millions of events per minute. No human can correlate across all of these signals during an incident by reading dashboards, and no existing tool pre-processes these signals into a form that AI agents (or humans) can consume efficiently.
@@ -105,7 +105,7 @@ The DEGRADED state is important: SitRep monitors its own quality and reduces con
 
 ## Change Attribution
 
-When quality degrades (signalled by the Arbiter), SitRep looks for recent changes that temporally correlate with the degradation. It consumes changes via the standardised change event schema defined in the [OpenSRM spec](https://github.com/rsionnach/opensrm), which means all change sources (deploys, config updates, model version swaps, prompt changes, adapter deployments, formula revisions) arrive in a uniform format:
+When quality degrades (signalled by the Arbiter), SitRep looks for recent changes that temporally correlate with the degradation. It consumes changes via the standardised change event schema defined in the [OpenSRM spec](https://github.com/rsionnach/nthlayer-spec), which means all change sources (deploys, config updates, model version swaps, prompt changes, adapter deployments, formula revisions) arrive in a uniform format:
 
 ```yaml
 change_event:
@@ -143,13 +143,13 @@ SitRep consumes signals from multiple source types:
 
 ## OpenSRM Integration
 
-SitRep reads service topology from [OpenSRM](https://github.com/rsionnach/opensrm) manifests to understand dependency relationships when correlating signals. A quality drop in service A that depends on service B (as declared in the manifest) triggers SitRep to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
+SitRep reads service topology from [OpenSRM](https://github.com/rsionnach/nthlayer-spec) manifests to understand dependency relationships when correlating signals. A quality drop in service A that depends on service B (as declared in the manifest) triggers SitRep to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
 
 ---
 
 ## Self-Measurement
 
-SitRep has its own judgment SLOs, measured through the [Arbiter's](https://github.com/rsionnach/arbiter) governance framework:
+SitRep has its own judgment SLOs, measured through the [Arbiter's](https://github.com/rsionnach/nthlayer-measure) governance framework:
 
 - **Correlation accuracy:** What percentage of SitRep's 'related change' assessments do humans agree with?
 - **False positive rate:** How often does SitRep flag a change as incident-related when it isn't?
@@ -211,12 +211,12 @@ Each component works alone. Someone who just needs signal correlation adopts Sit
 
 | Component | What it does | Link |
 |-----------|-------------|------|
-| **OpenSRM** | Specification for declaring service reliability requirements | [opensrm](https://github.com/rsionnach/opensrm) |
-| **Verdict** | Data primitive for recording AI judgments and measuring correctness | [verdicts](https://github.com/rsionnach/verdicts) |
-| **Arbiter** | Quality measurement and governance for AI agents | [arbiter](https://github.com/rsionnach/arbiter) |
+| **nthlayer-spec** | Specification for declaring service reliability requirements | [nthlayer-spec](https://github.com/rsionnach/nthlayer-spec) |
+| **nthlayer-learn** | Data primitive for recording AI judgments and measuring correctness | [nthlayer-learn](https://github.com/rsionnach/nthlayer-learn) |
+| **nthlayer-measure** | Quality measurement and governance for AI agents | [nthlayer-measure](https://github.com/rsionnach/nthlayer-measure) |
 | **NthLayer** | Generate monitoring infrastructure from manifests | [nthlayer](https://github.com/rsionnach/nthlayer) |
-| **SitRep** | Situational awareness through signal correlation (this repo) | [sitrep](https://github.com/rsionnach/sitrep) |
-| **Mayday** | Multi-agent incident response | [mayday](https://github.com/rsionnach/mayday) |
+| **nthlayer-correlate** | Situational awareness through signal correlation (this repo) | [nthlayer-correlate](https://github.com/rsionnach/nthlayer-correlate) |
+| **nthlayer-respond** | Multi-agent incident response | [nthlayer-respond](https://github.com/rsionnach/nthlayer-respond) |
 
 ---
 
@@ -232,7 +232,7 @@ SitRep follows [Zero Framework Cognition](ZFC.md). The boundary is clear:
 
 ## Status
 
-SitRep is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [Sitrep technical appendix](https://github.com/rsionnach/opensrm/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
+SitRep is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [Sitrep technical appendix](https://github.com/rsionnach/nthlayer-spec/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
 
 ---
 

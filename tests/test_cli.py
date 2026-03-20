@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from sitrep.cli import parse_relative_time, replay_command, status_command
+from nthlayer_correlate.cli import parse_relative_time, replay_command, status_command
 
 
 class TestParseRelativeTime:
