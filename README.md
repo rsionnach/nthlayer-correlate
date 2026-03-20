@@ -1,4 +1,4 @@
-# SitRep
+# nthlayer-correlate
 
 **Situational awareness through automated signal correlation.**
 
@@ -105,7 +105,7 @@ The DEGRADED state is important: SitRep monitors its own quality and reduces con
 
 ## Change Attribution
 
-When quality degrades (signalled by the Arbiter), SitRep looks for recent changes that temporally correlate with the degradation. It consumes changes via the standardised change event schema defined in the [OpenSRM spec](https://github.com/rsionnach/nthlayer-spec), which means all change sources (deploys, config updates, model version swaps, prompt changes, adapter deployments, formula revisions) arrive in a uniform format:
+When quality degrades (signalled by the Arbiter), SitRep looks for recent changes that temporally correlate with the degradation. It consumes changes via the standardised change event schema defined in the [OpenSRM spec](https://github.com/rsionnach/opensrm), which means all change sources (deploys, config updates, model version swaps, prompt changes, adapter deployments, formula revisions) arrive in a uniform format:
 
 ```yaml
 change_event:
@@ -143,7 +143,7 @@ SitRep consumes signals from multiple source types:
 
 ## OpenSRM Integration
 
-SitRep reads service topology from [OpenSRM](https://github.com/rsionnach/nthlayer-spec) manifests to understand dependency relationships when correlating signals. A quality drop in service A that depends on service B (as declared in the manifest) triggers SitRep to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
+SitRep reads service topology from [OpenSRM](https://github.com/rsionnach/opensrm) manifests to understand dependency relationships when correlating signals. A quality drop in service A that depends on service B (as declared in the manifest) triggers SitRep to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
 
 ---
 
@@ -211,7 +211,7 @@ Each component works alone. Someone who just needs signal correlation adopts Sit
 
 | Component | What it does | Link |
 |-----------|-------------|------|
-| **nthlayer-spec** | Specification for declaring service reliability requirements | [nthlayer-spec](https://github.com/rsionnach/nthlayer-spec) |
+| **OpenSRM** | Specification for declaring service reliability requirements | [OpenSRM](https://github.com/rsionnach/opensrm) |
 | **nthlayer-learn** | Data primitive for recording AI judgments and measuring correctness | [nthlayer-learn](https://github.com/rsionnach/nthlayer-learn) |
 | **nthlayer-measure** | Quality measurement and governance for AI agents | [nthlayer-measure](https://github.com/rsionnach/nthlayer-measure) |
 | **NthLayer** | Generate monitoring infrastructure from manifests | [nthlayer](https://github.com/rsionnach/nthlayer) |
@@ -232,7 +232,7 @@ SitRep follows [Zero Framework Cognition](ZFC.md). The boundary is clear:
 
 ## Status
 
-SitRep is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [Sitrep technical appendix](https://github.com/rsionnach/nthlayer-spec/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
+SitRep is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [Sitrep technical appendix](https://github.com/rsionnach/opensrm/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
 
 ---
 
