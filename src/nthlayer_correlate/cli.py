@@ -358,7 +358,7 @@ def status_command(config_path: str | None, store_dir: str | None = None) -> int
                 size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
             print(f"DB size: {size_str}")
         else:
-            print(f"DB size: 0 B")
+            print("DB size: 0 B")
 
         print()
         return 0

@@ -1,15 +1,12 @@
 """Tests for SitRep core data types."""
 from __future__ import annotations
 
-import pytest
 from nthlayer_correlate.types import (
     AgentState,
-    ChangeCandidate,
     CorrelationGroup,
     EventType,
     SitRepEvent,
     TemporalGroup,
-    TopologyCorrelation,
 )
 
 

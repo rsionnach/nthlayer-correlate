@@ -1,10 +1,8 @@
 """Tests for EventStore protocol and SQLite FTS5 implementation."""
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 
-import pytest
 from nthlayer_correlate.store.sqlite import SQLiteEventStore
 from nthlayer_correlate.types import EventType, SitRepEvent
 

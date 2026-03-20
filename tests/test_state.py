@@ -1,7 +1,6 @@
 """Tests for agent state machine."""
 from __future__ import annotations
 
-import pytest
 from nthlayer_correlate.state import StateMachine
 from nthlayer_correlate.types import AgentState, CorrelationGroup
 

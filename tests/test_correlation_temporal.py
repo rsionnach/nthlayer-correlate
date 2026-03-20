@@ -1,7 +1,6 @@
 """Tests for temporal grouping."""
 from __future__ import annotations
 
-import pytest
 from nthlayer_correlate.correlation.temporal import group_temporal
 from nthlayer_correlate.types import EventType, SitRepEvent
 

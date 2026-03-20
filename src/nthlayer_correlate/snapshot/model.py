@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import structlog
-from typing import Any
 
 from nthlayer_correlate.types import CorrelationGroup
 

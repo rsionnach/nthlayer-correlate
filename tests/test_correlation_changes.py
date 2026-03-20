@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from nthlayer_correlate.correlation.changes import find_change_candidates
-from nthlayer_correlate.store.sqlite import SQLiteEventStore
 from nthlayer_correlate.types import EventType, SitRepEvent, TemporalGroup
 
 

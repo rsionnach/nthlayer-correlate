@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import yaml
-import pytest
 from datetime import datetime, timedelta, timezone
 
 from nthlayer_correlate.correlation.engine import CorrelationEngine

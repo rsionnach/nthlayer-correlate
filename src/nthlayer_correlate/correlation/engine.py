@@ -10,7 +10,7 @@ from nthlayer_correlate.correlation.temporal import group_temporal
 from nthlayer_correlate.correlation.topology import group_topology
 from nthlayer_correlate.ingestion.severity import pre_score
 from nthlayer_correlate.store.protocol import EventStore
-from nthlayer_correlate.types import ChangeCandidate, CorrelationGroup, EventType, TemporalGroup
+from nthlayer_correlate.types import ChangeCandidate, CorrelationGroup, TemporalGroup
 
 
 class CorrelationEngine:
