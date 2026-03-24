@@ -406,14 +406,19 @@ class SQLiteEventStore:
         ids = [row["id"] for row in rows]
         rowids = [row["rowid"] for row in rows]
 
-        # Delete from FTS5 first
+        # Delete from FTS5 first — must pass exact original values
         for rowid in rowids:
-            self._conn.execute(
-                """INSERT INTO events_fts(events_fts, rowid, id, service, source, type, payload_text)
-                   SELECT 'delete', e.rowid, e.id, e.service, e.source, e.type, ''
-                   FROM events e WHERE e.rowid = ?""",
+            row = self._conn.execute(
+                "SELECT rowid, id, service, source, type, payload FROM events WHERE rowid = ?",
                 (rowid,),
-            )
+            ).fetchone()
+            if row:
+                payload_text = self._flatten_payload(json.loads(row["payload"]))
+                self._conn.execute(
+                    """INSERT INTO events_fts(events_fts, rowid, id, service, source, type, payload_text)
+                       VALUES ('delete', ?, ?, ?, ?, ?, ?)""",
+                    (row["rowid"], row["id"], row["service"], row["source"], row["type"], payload_text),
+                )
 
         # Delete from events table
         placeholders = ",".join("?" for _ in ids)

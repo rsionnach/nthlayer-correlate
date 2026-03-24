@@ -62,8 +62,8 @@ class TestSnapshotGenerator:
 
     def test_cache_invalidated_by_different_groups(self):
         gen = SnapshotGenerator()
-        gen.generate([_make_group(group_id="cg-a")])
-        _, cache_hit = gen.generate([_make_group(group_id="cg-b")])
+        gen.generate([_make_group(services=["svc-a"])])
+        _, cache_hit = gen.generate([_make_group(services=["svc-b"])])
         assert not cache_hit
 
     def test_no_cache_in_incident_mode(self):

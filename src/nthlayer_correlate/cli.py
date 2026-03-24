@@ -378,8 +378,9 @@ async def _serve_loop(config: SitRepConfig) -> None:
     model = ModelInterface(config.model_name, config.model_max_tokens)
     state_machine = StateMachine()
 
-    # Wire ingester handler to store.insert
-    ingester.on_event(lambda event: store.insert(event))
+    # Buffer events via queue to avoid concurrent SQLite writes
+    event_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+    ingester.on_event(lambda event: event_queue.put_nowait(event))
 
     # Start ingester
     await ingester.start()
@@ -416,6 +417,14 @@ async def _serve_loop(config: SitRepConfig) -> None:
                 break  # shutdown requested
             except asyncio.TimeoutError:
                 pass  # normal cycle
+
+            # Drain buffered events into store (single-threaded, safe)
+            while not event_queue.empty():
+                try:
+                    event = event_queue.get_nowait()
+                    store.insert(event)
+                except asyncio.QueueEmpty:
+                    break
 
             # Run correlation
             try:

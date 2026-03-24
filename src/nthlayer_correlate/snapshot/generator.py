@@ -72,9 +72,12 @@ class SnapshotGenerator:
         return prompt, False
 
     def _compute_hash(self, groups: list[CorrelationGroup]) -> str:
-        """SHA256 of sorted group IDs."""
-        ids = sorted(g.id for g in groups)
-        return hashlib.sha256("|".join(ids).encode()).hexdigest()
+        """SHA256 of stable group content (services, event counts, priority)."""
+        parts = sorted(
+            f"{','.join(sorted(g.services))}:{g.event_count}:{g.priority}"
+            for g in groups
+        )
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
     def _is_cache_valid(self, content_hash: str, state: AgentState) -> bool:
         """Check if cached snapshot is still valid."""
