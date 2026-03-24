@@ -7,7 +7,7 @@
 
 Enterprise-scale distributed systems produce an enormous volume of observability signals: metrics at 15-second intervals across thousands of services, structured logs on every request, distributed traces, alerts from multiple monitoring systems, change events from CI/CD pipelines, feature flag changes, and infrastructure scaling events. This is millions of events per minute. No human can correlate across all of these signals during an incident by reading dashboards, and no existing tool pre-processes these signals into a form that AI agents (or humans) can consume efficiently.
 
-SitRep solves this by continuously pre-correlating signals in the background so that when something goes wrong, the correlated picture is already built. Rather than querying raw events at incident time (which is too slow and too noisy at scale), SitRep groups related signals, computes temporal proximity, identifies co-occurring changes, and maintains a rolling window of pre-correlated state. When an incident happens, generating a situational snapshot takes seconds rather than minutes of ad-hoc querying across Prometheus, Loki, Jaeger, and your change history.
+nthlayer-correlate solves this by continuously pre-correlating signals in the background so that when something goes wrong, the correlated picture is already built. Rather than querying raw events at incident time (which is too slow and too noisy at scale), nthlayer-correlate groups related signals, computes temporal proximity, identifies co-occurring changes, and maintains a rolling window of pre-correlated state. When an incident happens, generating a situational snapshot takes seconds rather than minutes of ad-hoc querying across Prometheus, Loki, Jaeger, and your change history.
 
 This project is in the architecture phase. The design is documented below, and implementation has not yet started.
 
@@ -17,7 +17,7 @@ This project is in the architecture phase. The design is documented below, and i
 
 Prometheus handles metrics. Loki handles logs. Jaeger handles traces. But correlating across all three plus change events plus quality scores at enterprise scale is an unsolved problem that most teams handle manually during incidents (or don't handle at all). A company running thousands of services (think SaaS platforms like Workday, Stripe, Twilio) needs something that continuously watches across signal types and has the correlated view ready before anyone asks for it.
 
-Agentic systems add additional volume on top of the enterprise baseline. AI agent decisions, quality scores, model version changes, prompt updates, and adapter deployments all produce signals that existing observability infrastructure wasn't designed to handle. SitRep exists because raw observability data at enterprise scale is unusable without a pre-correlation layer.
+Agentic systems add additional volume on top of the enterprise baseline. AI agent decisions, quality scores, model version changes, prompt updates, and adapter deployments all produce signals that existing observability infrastructure wasn't designed to handle. nthlayer-correlate exists because raw observability data at enterprise scale is unusable without a pre-correlation layer.
 
 ---
 
@@ -25,7 +25,7 @@ Agentic systems add additional volume on top of the enterprise baseline. AI agen
 
 This is the core architectural concept. Pre-correlation is the difference between "let me spend 20 minutes querying four different systems during an incident" and "here's what happened, already correlated, in 3 seconds."
 
-SitRep continuously runs in the background, grouping related signals by service, time window, and topology. When a metric anomaly appears near a deployment event for a related service, SitRep has already noted the temporal proximity before anyone asks. The pre-correlated data is indexed and ready for snapshot generation at any time.
+nthlayer-correlate continuously runs in the background, grouping related signals by service, time window, and topology. When a metric anomaly appears near a deployment event for a related service, nthlayer-correlate has already noted the temporal proximity before anyone asks. The pre-correlated data is indexed and ready for snapshot generation at any time.
 
 Pre-correlation itself is transport (deterministic grouping, windowing, counting). Interpreting what the correlations mean is judgment (the model decides whether a temporal correlation is likely causal). This follows [Zero Framework Cognition](ZFC.md).
 
@@ -69,43 +69,43 @@ The schema captures what happened (signals), what's related (correlations with c
 
 ## Event Ingestion
 
-At enterprise scale, SitRep needs a streaming/queuing layer between event producers and the correlation engine. Raw events from OTel collectors, monitoring systems, CI/CD pipelines, change event sources, and quality score producers flow through a message queue that handles backpressure, replay, and fan-out.
+At enterprise scale, nthlayer-correlate needs a streaming/queuing layer between event producers and the correlation engine. Raw events from OTel collectors, monitoring systems, CI/CD pipelines, change event sources, and quality score producers flow through a message queue that handles backpressure, replay, and fan-out.
 
-- **Enterprise scale:** Kafka, with partitioning by service and topics by signal type. Kafka's compaction and replay capabilities are designed for exactly this volume, and its consumer group model maps naturally to having multiple ecosystem components (SitRep, the Arbiter, Mayday) each consuming the same event stream independently.
+- **Enterprise scale:** Kafka, with partitioning by service and topics by signal type. Kafka's compaction and replay capabilities are designed for exactly this volume, and its consumer group model maps naturally to having multiple ecosystem components (nthlayer-correlate, nthlayer-measure, nthlayer-respond) each consuming the same event stream independently.
 - **Smaller deployments:** NATS provides a lighter-weight alternative for teams that don't need Kafka's full feature set.
 
-SitRep consumes from the queue, pre-correlates, and stores the results. This decouples event production rate from correlation processing rate, which is essential when thousands of services are each producing metrics, logs, and traces continuously.
+nthlayer-correlate consumes from the queue, pre-correlates, and stores the results. This decouples event production rate from correlation processing rate, which is essential when thousands of services are each producing metrics, logs, and traces continuously.
 
 ---
 
 ## Generation Modes
 
-SitRep generates snapshots in three modes, each producing the same schema but with different urgency and depth:
+nthlayer-correlate generates snapshots in three modes, each producing the same schema but with different urgency and depth:
 
 - **Batch (periodic):** Lightweight summaries every N minutes (default: 5 minutes in WATCHING state) for continuous situational awareness. These snapshots capture the ambient state of the system.
-- **Incident-triggered:** On alert firing, SitRep pulls in more context and performs deeper correlation. These snapshots are richer and more detailed, designed to give an incident responder (human or agent) immediate context.
-- **Refresh (on-demand):** When a human or agent requests an updated picture, SitRep generates a fresh snapshot incorporating any new information that arrived since the last one. During active incidents, refresh snapshots run on a 1-minute cycle.
+- **Incident-triggered:** On alert firing, nthlayer-correlate pulls in more context and performs deeper correlation. These snapshots are richer and more detailed, designed to give an incident responder (human or agent) immediate context.
+- **Refresh (on-demand):** When a human or agent requests an updated picture, nthlayer-correlate generates a fresh snapshot incorporating any new information that arrived since the last one. During active incidents, refresh snapshots run on a 1-minute cycle.
 
 ---
 
 ## Agent States
 
-SitRep operates in distinct states that affect its behaviour:
+nthlayer-correlate operates in distinct states that affect its behaviour:
 
 | State | Trigger | Behaviour |
 |-------|---------|-----------|
 | **WATCHING** | Normal operations | Background correlation, 5-minute snapshot cycle |
 | **ALERT** | Elevated signal detected | Increased correlation frequency, broader signal ingestion |
-| **INCIDENT** | Incident declared | Continuous reassessment, 1-minute snapshots, pushes context to Mayday |
+| **INCIDENT** | Incident declared | Continuous reassessment, 1-minute snapshots, pushes context to nthlayer-respond |
 | **DEGRADED** | Own judgment SLO metrics below threshold | Conservative mode, reduced confidence in correlations, flags for human review |
 
-The DEGRADED state is important: SitRep monitors its own quality and reduces confidence when it detects its correlations are less reliable. This is self-awareness as a feature, not an afterthought.
+The DEGRADED state is important: nthlayer-correlate monitors its own quality and reduces confidence when it detects its correlations are less reliable. This is self-awareness as a feature, not an afterthought.
 
 ---
 
 ## Change Attribution
 
-When quality degrades (signalled by the Arbiter), SitRep looks for recent changes that temporally correlate with the degradation. It consumes changes via the standardised change event schema defined in the [OpenSRM spec](https://github.com/rsionnach/opensrm), which means all change sources (deploys, config updates, model version swaps, prompt changes, adapter deployments, formula revisions) arrive in a uniform format:
+When quality degrades (signalled by nthlayer-measure), nthlayer-correlate looks for recent changes that temporally correlate with the degradation. It consumes changes via the standardised change event schema defined in the [OpenSRM spec](https://github.com/rsionnach/opensrm), which means all change sources (deploys, config updates, model version swaps, prompt changes, adapter deployments, formula revisions) arrive in a uniform format:
 
 ```yaml
 change_event:
@@ -125,42 +125,42 @@ change_event:
   rollback_available: true
 ```
 
-SitRep doesn't need per-source integrations because the change event schema normalises everything. The pre-correlation layer continuously maintains a rolling window of changes, so when a quality signal fires, the candidate causes are already indexed. Identifying the candidate set is transport (pre-computed by the correlation engine). Evaluating whether a temporal correlation is causal is judgment (the model decides).
+nthlayer-correlate doesn't need per-source integrations because the change event schema normalises everything. The pre-correlation layer continuously maintains a rolling window of changes, so when a quality signal fires, the candidate causes are already indexed. Identifying the candidate set is transport (pre-computed by the correlation engine). Evaluating whether a temporal correlation is causal is judgment (the model decides).
 
 ---
 
 ## Signal Sources
 
-SitRep consumes signals from multiple source types:
+nthlayer-correlate consumes signals from multiple source types:
 
 - **OTel metrics and traces** via OTel Collector (Prometheus remote write, OTLP)
 - **Alerts** from Alertmanager (webhook)
 - **Change events** from all sources, normalised via the OpenSRM change event schema (GitHub, ArgoCD, LaunchDarkly, model registries, prompt management systems)
-- **Quality scores** from the Arbiter (OTel metrics)
+- **Quality scores** from nthlayer-measure (OTel metrics)
 - **Deployment records** from CI/CD pipelines
 
 ---
 
 ## OpenSRM Integration
 
-SitRep reads service topology from [OpenSRM](https://github.com/rsionnach/opensrm) manifests to understand dependency relationships when correlating signals. A quality drop in service A that depends on service B (as declared in the manifest) triggers SitRep to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
+nthlayer-correlate reads service topology from [OpenSRM](https://github.com/rsionnach/opensrm) manifests to understand dependency relationships when correlating signals. A quality drop in service A that depends on service B (as declared in the manifest) triggers nthlayer-correlate to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
 
 ---
 
 ## Self-Measurement
 
-SitRep has its own judgment SLOs, measured through the [Arbiter's](https://github.com/rsionnach/nthlayer-measure) governance framework:
+nthlayer-correlate has its own judgment SLOs, measured through [nthlayer-measure's](https://github.com/rsionnach/nthlayer-measure) governance framework:
 
-- **Correlation accuracy:** What percentage of SitRep's 'related change' assessments do humans agree with?
-- **False positive rate:** How often does SitRep flag a change as incident-related when it isn't?
+- **Correlation accuracy:** What percentage of nthlayer-correlate's 'related change' assessments do humans agree with?
+- **False positive rate:** How often does nthlayer-correlate flag a change as incident-related when it isn't?
 
-Every correlation assessment emits a `gen_ai.decision.*` OTel event, and human disagreements emit `gen_ai.override.*` events that feed SitRep's own quality measurement. If SitRep's correlation quality drops, the Arbiter's governance layer can reduce SitRep's confidence levels or flag it for human review.
+Every correlation assessment emits a `gen_ai.decision.*` OTel event, and human disagreements emit `gen_ai.override.*` events that feed nthlayer-correlate's own quality measurement. If nthlayer-correlate's correlation quality drops, nthlayer-measure's governance layer can reduce nthlayer-correlate's confidence levels or flag it for human review.
 
 ---
 
 ## OpenSRM Ecosystem
 
-SitRep is one component in the OpenSRM ecosystem. Each component solves a complete problem independently, and they compose when used together through shared OpenSRM manifests and OTel telemetry conventions.
+nthlayer-correlate is one component in the OpenSRM ecosystem. Each component solves a complete problem independently, and they compose when used together through shared OpenSRM manifests and OTel telemetry conventions.
 
 ```
                         ┌─────────────────────────┐
@@ -172,7 +172,7 @@ SitRep is one component in the OpenSRM ecosystem. Each component solves a comple
                ┌─────────────┬──────┴──────┬─────────────┐
                ▼             ▼             ▼             ▼
          ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-         │ Arbiter  │ │ NthLayer │ │>>SITREP< │ │  Mayday  │
+         │ MEASURE  │ │ NthLayer │ │>CORRELATE│ │ RESPOND  │
          │          │ │          │ │          │ │          │
          │ quality  │ │ generate │ │correlate │ │ incident │
          │+govern   │ │ monitoring│ │ signals  │ │ response │
@@ -195,19 +195,19 @@ SitRep is one component in the OpenSRM ecosystem. Each component solves a comple
                      └──────────────────────────┘
 
               Learning loop (post-incident):
-              Mayday findings → manifest updates
-              → NthLayer regenerates → Arbiter
-              refines → SitRep improves → OpenSRM
+              nthlayer-respond findings → manifest updates
+              → NthLayer regenerates → nthlayer-measure
+              refines → nthlayer-correlate improves → OpenSRM
 ```
 
-**How SitRep fits in:**
+**How nthlayer-correlate fits in:**
 
-- SitRep emits **correlation verdicts** for every correlation assessment, stored in the shared Verdict Store. Mayday consumes these verdicts (with confidence scores and lineage) as the starting context for incident response — no direct coupling between components.
-- SitRep consumes **Arbiter quality verdicts** as events and correlates them with other signals (deployments, config changes, model version swaps) to identify what caused quality degradation
-- SitRep reads **service topology from OpenSRM manifests** (via NthLayer's topology export) to understand dependency relationships when correlating
-- SitRep's **correlation accuracy improves over time** as the learning loop feeds post-incident findings back into its models
+- nthlayer-correlate emits **correlation verdicts** for every correlation assessment, stored in the shared Verdict Store. nthlayer-respond consumes these verdicts (with confidence scores and lineage) as the starting context for incident response — no direct coupling between components.
+- nthlayer-correlate consumes **nthlayer-measure quality verdicts** as events and correlates them with other signals (deployments, config changes, model version swaps) to identify what caused quality degradation
+- nthlayer-correlate reads **service topology from OpenSRM manifests** (via NthLayer's topology export) to understand dependency relationships when correlating
+- nthlayer-correlate's **correlation accuracy improves over time** as the learning loop feeds post-incident findings back into its models
 
-Each component works alone. Someone who just needs signal correlation adopts SitRep without needing the Arbiter, NthLayer, or Mayday.
+Each component works alone. Someone who just needs signal correlation adopts nthlayer-correlate without needing nthlayer-measure, NthLayer, or nthlayer-respond.
 
 | Component | What it does | Link |
 |-----------|-------------|------|
@@ -222,7 +222,7 @@ Each component works alone. Someone who just needs signal correlation adopts Sit
 
 ## Architecture
 
-SitRep follows [Zero Framework Cognition](ZFC.md). The boundary is clear:
+nthlayer-correlate follows [Zero Framework Cognition](ZFC.md). The boundary is clear:
 
 **Transport (code):** Ingesting events from the streaming layer, grouping signals by service and time window, maintaining the rolling pre-correlation index, computing temporal proximity between signals, generating the structured snapshot schema, publishing snapshots via API and SSE.
 
@@ -232,7 +232,7 @@ SitRep follows [Zero Framework Cognition](ZFC.md). The boundary is clear:
 
 ## Status
 
-SitRep is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [Sitrep technical appendix](https://github.com/rsionnach/opensrm/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
+nthlayer-correlate is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [nthlayer-correlate technical appendix](https://github.com/rsionnach/opensrm/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
 
 ---
 

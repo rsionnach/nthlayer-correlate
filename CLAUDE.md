@@ -9,7 +9,7 @@ Situational awareness through automated signal correlation. Continuously pre-cor
 <!-- AUTO-MANAGED: build-commands -->
 ## Build Commands
 
-- **Install nthlayer-learn library (prerequisite):** `pip install -e ../../verdicts/lib/python`
+- **Install nthlayer-learn library (prerequisite):** `pip install -e ../../nthlayer-learn/lib/python`
 - **Run tests:** `uv run pytest tests/ -v`
 - **Run single test file:** `uv run pytest tests/test_types.py -v`
 - **Run CLI:** `uv run nthlayer-correlate serve | status | replay`
@@ -21,9 +21,9 @@ Situational awareness through automated signal correlation. Continuously pre-cor
 
 ## What This Is
 
-SitRep solves the signal correlation problem at enterprise scale: millions of events per minute across metrics, logs, traces, alerts, change events, and quality scores. Rather than querying raw events at incident time (too slow, too noisy), SitRep pre-correlates continuously so the correlated view is built before anyone asks for it. When an incident fires, generating a situational snapshot takes seconds rather than minutes of ad-hoc querying across Prometheus, Loki, Jaeger, and change history.
+nthlayer-correlate solves the signal correlation problem at enterprise scale: millions of events per minute across metrics, logs, traces, alerts, change events, and quality scores. Rather than querying raw events at incident time (too slow, too noisy), nthlayer-correlate pre-correlates continuously so the correlated view is built before anyone asks for it. When an incident fires, generating a situational snapshot takes seconds rather than minutes of ad-hoc querying across Prometheus, Loki, Jaeger, and change history.
 
-SitRep is one component in the OpenSRM ecosystem (opensrm, arbiter, nthlayer, mayday) but is designed to stand alone. A team without the rest of the ecosystem can adopt SitRep for signal correlation.
+nthlayer-correlate is one component in the OpenSRM ecosystem (opensrm, nthlayer-measure, nthlayer, nthlayer-respond) but is designed to stand alone. A team without the rest of the ecosystem can adopt nthlayer-correlate for signal correlation.
 
 ---
 
@@ -55,7 +55,7 @@ Pre-correlation is transport (deterministic grouping, windowing, counting). Inte
 
 ### Pre-Correlation Concept
 
-SitRep continuously runs in the background, grouping related signals by service, time window, and topology. The pre-correlated data is indexed and ready for snapshot generation at any time. Every box before the model call is transport; the model handles only the judgment that remains after transport has done everything it can.
+nthlayer-correlate continuously runs in the background, grouping related signals by service, time window, and topology. The pre-correlated data is indexed and ready for snapshot generation at any time. Every box before the model call is transport; the model handles only the judgment that remains after transport has done everything it can.
 
 ### Package Structure (Phase 2 — Tier 1)
 
@@ -214,7 +214,7 @@ Scenario coverage:
 - OTel metrics and traces via OTel Collector (Prometheus remote write, OTLP)
 - Alerts from Alertmanager (webhook)
 - Change events normalised via OpenSRM change event schema (GitHub, ArgoCD, LaunchDarkly, model registries, prompt management systems)
-- Quality scores from Arbiter (OTel metrics)
+- Quality scores from nthlayer-measure (OTel metrics)
 - Deployment records from CI/CD pipelines
 
 ### Streaming Layer (Tier 2+)
@@ -236,18 +236,18 @@ Change event schema includes AI-specific change types: model version swaps, prom
 
 ## Verdict Integration
 
-Verdict output is fully specified in Phase 2 (see `docs/superpowers/specs/2026-03-17-sitrep-phase2-design.md`). SitRep depends on the `nthlayer-learn` library (path-based: `pip install -e ../../verdicts/lib/python`).
+Verdict output is fully specified in Phase 2 (see `docs/superpowers/specs/2026-03-17-sitrep-phase2-design.md`). nthlayer-correlate depends on the `nthlayer-learn` library (path-based: `pip install -e ../../nthlayer-learn/lib/python`).
 
 **Output:** Each correlation assessment → `verdict.create()` with:
 - `subject.type = "correlation"`, `producer.system = "sitrep"`
 - `judgment.action = "flag" | "watch" | "escalate"`, `judgment.confidence = 0.0-1.0`
 - Parent snapshot verdict links children via `lineage.children`
 
-**Ingestion:** `verdict` is a valid `EventType` alongside `alert`, `metric_breach`, `change`, `quality_score`. Arbiter quality verdicts arrive via the same ingestion path and participate in pre-correlation.
+**Ingestion:** `verdict` is a valid `EventType` alongside `alert`, `metric_breach`, `change`, `quality_score`. nthlayer-measure quality verdicts arrive via the same ingestion path and participate in pre-correlation.
 
 **Degraded mode:** Template-based verdicts with `confidence: 0.0` and `reasoning: "template-based, model unavailable"` — transport continues, judgment pauses (ZFC fail-open pattern).
 
-**Shared store:** Single `verdicts.db` (SQLite WAL) shared with Arbiter. Cross-component lineage queries work because all verdicts are in one store.
+**Shared store:** Single `verdicts.db` (SQLite WAL) shared with nthlayer-measure. Cross-component lineage queries work because all verdicts are in one store.
 
 **Self-measurement:** `verdict.accuracy(producer="sitrep", subject_type="correlation")` measures correlation accuracy. Human corrections feed the calibration loop via `gen_ai.override.*` OTel events.
 
@@ -255,20 +255,20 @@ Verdict output is fully specified in Phase 2 (see `docs/superpowers/specs/2026-0
 
 ## Self-Measurement
 
-SitRep has its own judgment SLOs, measured through the Arbiter's governance framework:
+nthlayer-correlate has its own judgment SLOs, measured through the nthlayer-measure's governance framework:
 
-- **Correlation accuracy:** What percentage of SitRep's "related change" assessments do humans agree with?
-- **False positive rate:** How often does SitRep flag a change as incident-related when it isn't?
+- **Correlation accuracy:** What percentage of nthlayer-correlate's "related change" assessments do humans agree with?
+- **False positive rate:** How often does nthlayer-correlate flag a change as incident-related when it isn't?
 
-Every correlation assessment emits a `gen_ai.decision.*` OTel event. Human disagreements emit `gen_ai.override.*` events. If SitRep's correlation quality drops, the Arbiter's governance layer can reduce SitRep's confidence levels or flag it for human review.
+Every correlation assessment emits a `gen_ai.decision.*` OTel event. Human disagreements emit `gen_ai.override.*` events. If nthlayer-correlate's correlation quality drops, the nthlayer-measure's governance layer can reduce nthlayer-correlate's confidence levels or flag it for human review.
 
 ---
 
 ## OpenSRM Integration
 
-SitRep reads service topology from OpenSRM manifests to understand dependency relationships. A quality drop in service A that depends on service B triggers SitRep to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
+nthlayer-correlate reads service topology from OpenSRM manifests to understand dependency relationships. A quality drop in service A that depends on service B triggers nthlayer-correlate to check service B's signals automatically. The manifest provides the dependency graph that makes topology-aware correlation possible.
 
-OpenSRM integration is additive — SitRep can correlate signals without manifests, but topology-aware correlation requires them.
+OpenSRM integration is additive — nthlayer-correlate can correlate signals without manifests, but topology-aware correlation requires them.
 
 ---
 
@@ -276,12 +276,12 @@ OpenSRM integration is additive — SitRep can correlate signals without manifes
 
 | Component | Role |
 |-----------|------|
-| [nthlayer-spec](../nthlayer-spec/) | Shared manifest spec and change event schema |
-| [nthlayer-learn](../verdicts/) | Data primitive — SitRep correlation output becomes verdicts; Arbiter quality verdicts ingested as events |
-| [nthlayer-measure](../arbiter/) | Quality scores consumed by SitRep; governs SitRep's own judgment SLOs |
-| [nthlayer](../nthlayer/) | Topology exports that SitRep uses for dependency-aware correlation |
-| [nthlayer-correlate](../sitrep/) | This repo — pre-correlation and situational snapshots |
-| [nthlayer-respond](../mayday/) | Consumes SitRep snapshots as starting context for incident response |
+| [opensrm](../opensrm/) | Shared manifest spec and change event schema |
+| [nthlayer-learn](../nthlayer-learn/) | Data primitive — nthlayer-correlate correlation output becomes verdicts; nthlayer-measure quality verdicts ingested as events |
+| [nthlayer-measure](../nthlayer-measure/) | Quality scores consumed by nthlayer-correlate; governs nthlayer-correlate's own judgment SLOs |
+| [nthlayer](../nthlayer/) | Topology exports that nthlayer-correlate uses for dependency-aware correlation |
+| [nthlayer-correlate](../nthlayer-correlate/) | This repo — pre-correlation and situational snapshots |
+| [nthlayer-respond](../nthlayer-respond/) | Consumes nthlayer-correlate snapshots as starting context for incident response |
 
 Each component works independently. Composition happens through shared OpenSRM manifests and OTel conventions.
 
