@@ -310,21 +310,6 @@ class SQLiteEventStore:
             return []
 
         placeholders = ",".join("?" for _ in visited)
-        sql = f"""\
-            SELECT * FROM events
-            WHERE service IN ({placeholders})
-               OR dependencies LIKE ?
-               OR dependents LIKE ?
-            ORDER BY timestamp DESC
-        """
-        # We also include events that reference any visited service in deps
-        # Build a combined LIKE pattern — but for simplicity, just collect
-        # events for all visited services and events referencing them.
-        params_list: list[Any] = list(visited)
-        # For the LIKE clauses, we match any visited service in JSON arrays
-        like_pattern = "|".join(visited)
-        # Actually, let's do a simpler approach: query by service IN (...),
-        # plus any event whose deps/dependents contain the original service
         rows = self._conn.execute(
             f"""\
             SELECT DISTINCT e.* FROM events e
@@ -372,7 +357,7 @@ class SQLiteEventStore:
                 SELECT * FROM events
                 WHERE type = 'change'
                   AND service = ?
-                  AND timestamp >= datetime(?, ? || ' minutes')
+                  AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', ?, ? || ' minutes')
                   AND timestamp <= ?
                 ORDER BY timestamp DESC
             """
@@ -384,7 +369,7 @@ class SQLiteEventStore:
                 SELECT * FROM events
                 WHERE type = 'change'
                   AND service = ?
-                  AND timestamp >= datetime('now', ? || ' minutes')
+                  AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' minutes')
                 ORDER BY timestamp DESC
             """
             rows = self._conn.execute(sql, (service, f"-{window_minutes}")).fetchall()

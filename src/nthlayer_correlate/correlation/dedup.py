@@ -1,6 +1,8 @@
 """Signal deduplication. Deterministic transport."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 from nthlayer_correlate.types import SitRepEvent
 
 
@@ -54,8 +56,6 @@ def deduplicate(events: list[SitRepEvent]) -> list[SitRepEvent]:
             new_payload = dict(event.payload)
             new_payload["_dedup_count"] = counts[key]
             new_payload["_dedup_duration_seconds"] = duration
-            # Create a new event with updated payload
-            from dataclasses import replace
             event = replace(event, payload=new_payload)
         result.append(event)
 

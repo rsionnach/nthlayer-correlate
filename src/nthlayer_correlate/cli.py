@@ -165,8 +165,8 @@ def replay_command(
 
                 # Assemble correlation groups using the engine helper
                 engine = CorrelationEngine()
-                groups = _assemble_groups(
-                    engine, temporal_groups, topology_correlations,
+                groups = engine.assemble_groups(
+                    temporal_groups, topology_correlations,
                     change_candidates_map, topology,
                 )
             else:
@@ -213,118 +213,6 @@ def replay_command(
     finally:
         store.close()
 
-
-def _assemble_groups(
-    engine: CorrelationEngine,
-    temporal_groups: list,
-    topology_correlations: list,
-    change_candidates_map: dict,
-    topology: dict | None,
-) -> list[CorrelationGroup]:
-    """Assemble CorrelationGroups from correlation sub-step outputs.
-
-    Mirrors the assembly logic in CorrelationEngine.correlate().
-    """
-    import uuid
-    from nthlayer_correlate.types import ChangeCandidate, TemporalGroup
-
-    assigned: set[int] = set()
-    correlation_groups: list[CorrelationGroup] = []
-
-    # First pass: topology-linked groups
-    for tc in topology_correlations:
-        involved_services = {tc.primary_service}
-        for rs in tc.related_services:
-            involved_services.add(rs["service"])
-
-        signals: list[TemporalGroup] = []
-        for gi, tg in enumerate(temporal_groups):
-            if tg.service in involved_services and gi not in assigned:
-                signals.append(tg)
-                assigned.add(gi)
-
-        if not signals:
-            continue
-
-        all_changes: list[ChangeCandidate] = []
-        for svc in involved_services:
-            all_changes.extend(change_candidates_map.get(svc, []))
-
-        peak_severity = max(s.peak_severity for s in signals)
-        priority = engine._compute_priority(
-            peak_severity, list(involved_services), topology, topology_correlations
-        )
-
-        total_events = sum(s.count for s in signals)
-        primary_type = engine._dominant_event_type(signals)
-        services_str = ", ".join(sorted(involved_services))
-        summary = (
-            f"{total_events} {primary_type}(s) on {services_str} "
-            f"with {len(all_changes)} recent change(s)"
-        )
-
-        all_timestamps = []
-        for s in signals:
-            all_timestamps.append(s.time_window[0])
-            all_timestamps.append(s.time_window[1])
-        first_seen = min(all_timestamps)
-        last_updated = max(all_timestamps)
-
-        group_id = f"cg-{uuid.uuid4().hex[:8]}"
-        correlation_groups.append(
-            CorrelationGroup(
-                id=group_id,
-                priority=priority,
-                summary=summary,
-                services=sorted(involved_services),
-                signals=signals,
-                topology=tc,
-                change_candidates=all_changes,
-                first_seen=first_seen,
-                last_updated=last_updated,
-                event_count=total_events,
-            )
-        )
-
-    # Second pass: unassigned temporal groups
-    for gi, tg in enumerate(temporal_groups):
-        if gi in assigned:
-            continue
-
-        service = tg.service
-        changes = change_candidates_map.get(service, [])
-        peak_severity = tg.peak_severity
-        priority = engine._compute_priority(
-            peak_severity, [service], topology, topology_correlations
-        )
-
-        primary_type = engine._dominant_event_type([tg])
-        summary = (
-            f"{tg.count} {primary_type}(s) on {service} "
-            f"with {len(changes)} recent change(s)"
-        )
-
-        group_id = f"cg-{uuid.uuid4().hex[:8]}"
-        correlation_groups.append(
-            CorrelationGroup(
-                id=group_id,
-                priority=priority,
-                summary=summary,
-                services=[service],
-                signals=[tg],
-                topology=None,
-                change_candidates=changes,
-                first_seen=tg.time_window[0],
-                last_updated=tg.time_window[1],
-                event_count=tg.count,
-            )
-        )
-
-    correlation_groups.sort(
-        key=lambda g: (g.priority, -max(s.peak_severity for s in g.signals))
-    )
-
-    return correlation_groups
 
 
 def status_command(config_path: str | None, store_dir: str | None = None) -> int:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from nthlayer_correlate.correlation.changes import find_change_candidates
@@ -47,8 +48,6 @@ class CorrelationEngine:
         deduped = deduplicate(events)
 
         # Step 3: Severity enrichment
-        from dataclasses import replace
-
         enriched = []
         for event in deduped:
             new_severity = pre_score(event, slo_targets)
@@ -70,15 +69,22 @@ class CorrelationEngine:
         )
 
         # Step 7: Assemble CorrelationGroups with priority scoring
-        # Build a mapping from topology correlations to groups
-        topology_linked: dict[str, int] = {}  # service -> topology correlation index
-        for idx, tc in enumerate(topology_correlations):
-            topology_linked[tc.primary_service] = idx
-            for rs in tc.related_services:
-                topology_linked[rs["service"]] = idx
+        return self.assemble_groups(
+            temporal_groups, topology_correlations, change_candidates_map, topology
+        )
 
-        # Group temporal groups that share topology correlations
-        # Track which temporal groups have been assigned to a correlation group
+    def assemble_groups(
+        self,
+        temporal_groups: list[TemporalGroup],
+        topology_correlations: list,
+        change_candidates_map: dict[str, list[ChangeCandidate]],
+        topology: dict | None,
+    ) -> list[CorrelationGroup]:
+        """Assemble CorrelationGroups from pre-computed correlation sub-step outputs.
+
+        Two-pass assembly: topology-linked groups first, then unassigned temporal groups.
+        Used by both correlate() and CLI replay.
+        """
         assigned: set[int] = set()
         correlation_groups: list[CorrelationGroup] = []
 
@@ -88,7 +94,6 @@ class CorrelationEngine:
             for rs in tc.related_services:
                 involved_services.add(rs["service"])
 
-            # Find all temporal groups for involved services
             signals: list[TemporalGroup] = []
             for gi, tg in enumerate(temporal_groups):
                 if tg.service in involved_services and gi not in assigned:
@@ -98,20 +103,15 @@ class CorrelationEngine:
             if not signals:
                 continue
 
-            # Gather change candidates for all involved services
             all_changes: list[ChangeCandidate] = []
             for svc in involved_services:
                 all_changes.extend(change_candidates_map.get(svc, []))
 
-            # Compute peak severity across all signals
             peak_severity = max(s.peak_severity for s in signals)
-
-            # Priority scoring
             priority = self._compute_priority(
                 peak_severity, list(involved_services), topology, topology_correlations
             )
 
-            # Build summary
             total_events = sum(s.count for s in signals)
             primary_type = self._dominant_event_type(signals)
             services_str = ", ".join(sorted(involved_services))
@@ -120,7 +120,6 @@ class CorrelationEngine:
                 f"with {len(all_changes)} recent change(s)"
             )
 
-            # Timestamps
             all_timestamps = []
             for s in signals:
                 all_timestamps.append(s.time_window[0])
@@ -129,7 +128,6 @@ class CorrelationEngine:
             last_updated = max(all_timestamps)
 
             group_id = f"cg-{uuid.uuid4().hex[:8]}"
-
             correlation_groups.append(
                 CorrelationGroup(
                     id=group_id,
@@ -152,9 +150,7 @@ class CorrelationEngine:
 
             service = tg.service
             changes = change_candidates_map.get(service, [])
-
             peak_severity = tg.peak_severity
-
             priority = self._compute_priority(
                 peak_severity, [service], topology, topology_correlations
             )
@@ -166,7 +162,6 @@ class CorrelationEngine:
             )
 
             group_id = f"cg-{uuid.uuid4().hex[:8]}"
-
             correlation_groups.append(
                 CorrelationGroup(
                     id=group_id,
@@ -182,11 +177,9 @@ class CorrelationEngine:
                 )
             )
 
-        # Sort by priority (P0 first), then by peak severity descending
         correlation_groups.sort(
             key=lambda g: (g.priority, -max(s.peak_severity for s in g.signals))
         )
-
         return correlation_groups
 
     def _compute_priority(
@@ -217,6 +210,19 @@ class CorrelationEngine:
 
         if peak_severity > 0.6:
             return 1  # P1
+
+        # P1 if has topology correlation with a P0-eligible group
+        if topology is not None and topology_correlations:
+            for tc in topology_correlations:
+                linked_services = {tc.primary_service}
+                for rs in tc.related_services:
+                    linked_services.add(rs["service"])
+                if linked_services & set(services):
+                    # Check if any linked service is P0-eligible
+                    for svc in linked_services:
+                        svc_info = topology.get(svc, {})
+                        if svc_info.get("tier") == "critical":
+                            return 1  # P1 — topology link to critical service
 
         if peak_severity > 0.3:
             return 2  # P2

@@ -141,6 +141,70 @@ class TestCorrelationEngineWithScenarios:
             assert not ({"auth-service", "analytics-worker"}.issubset(svc_set))
         store.close()
 
+    def test_simple_causal_chain(self, tmp_path):
+        """Deploy then alert on same service → 1 correlation group."""
+        scenario = _load_scenario("simple-causal-chain")
+        events, topology = _scenario_to_events(scenario)
+
+        store = SQLiteEventStore(str(tmp_path / "test.db"))
+        store.insert_batch(events)
+
+        engine = CorrelationEngine()
+        groups = engine.correlate(store, window_minutes=30, topology=topology)
+
+        expected = scenario["expected_outcomes"]
+        assert len(groups) >= expected["correlation_groups"]
+
+        # payment-api should be in the group
+        all_services = set()
+        for g in groups:
+            all_services.update(g.services)
+        for svc in expected["affected_services"]:
+            assert svc in all_services
+
+        # Should surface the deploy as a change candidate
+        all_changes = []
+        for g in groups:
+            all_changes.extend(g.change_candidates)
+        assert len(all_changes) >= 1
+        change_types = {c.change.payload.get("change_type") for c in all_changes}
+        assert "deploy" in change_types
+        store.close()
+
+    def test_multi_candidate(self, tmp_path):
+        """3 changes before alert → all 3 surfaced as change candidates."""
+        scenario = _load_scenario("multi-candidate")
+        events, topology = _scenario_to_events(scenario)
+
+        store = SQLiteEventStore(str(tmp_path / "test.db"))
+        store.insert_batch(events)
+
+        engine = CorrelationEngine()
+        groups = engine.correlate(store, window_minutes=30, topology=topology)
+
+        expected = scenario["expected_outcomes"]
+        assert len(groups) >= expected["correlation_groups"]
+
+        # order-service should be affected
+        all_services = set()
+        for g in groups:
+            all_services.update(g.services)
+        for svc in expected["affected_services"]:
+            assert svc in all_services
+
+        # All 3 change candidates should be surfaced
+        all_changes = []
+        for g in groups:
+            all_changes.extend(g.change_candidates)
+
+        expected_changes = expected["change_candidates"]
+        found_changes = {(c.change.service, c.change.payload.get("change_type")) for c in all_changes}
+        for ec in expected_changes:
+            assert (ec["service"], ec["change_type"]) in found_changes, (
+                f"Expected change ({ec['service']}, {ec['change_type']}) not found in {found_changes}"
+            )
+        store.close()
+
 
 class TestCorrelationEngineBasic:
     def test_empty_store_no_groups(self, tmp_path):
