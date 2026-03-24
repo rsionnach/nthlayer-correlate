@@ -26,7 +26,7 @@ from nthlayer_correlate.snapshot.generator import SnapshotBudget, SnapshotGenera
 from nthlayer_correlate.snapshot.model import ModelInterface
 from nthlayer_correlate.state import StateMachine
 from nthlayer_correlate.store.sqlite import SQLiteEventStore
-from nthlayer_correlate.types import AgentState, CorrelationGroup, EventType, SitRepEvent
+from nthlayer_correlate.types import AgentState, EventType, SitRepEvent
 
 logger = structlog.get_logger()
 
