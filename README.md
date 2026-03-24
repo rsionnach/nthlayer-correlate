@@ -2,14 +2,14 @@
 
 **Situational awareness through automated signal correlation.**
 
-[![Status: Architecture](https://img.shields.io/badge/Status-Architecture-blue?style=for-the-badge)](https://github.com/rsionnach/nthlayer-correlate)
+[![Status: Phase 2 Tier 1](https://img.shields.io/badge/Status-Phase_2_Tier_1-brightgreen?style=for-the-badge)](https://github.com/rsionnach/nthlayer-correlate)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge)](LICENSE)
 
 Enterprise-scale distributed systems produce an enormous volume of observability signals: metrics at 15-second intervals across thousands of services, structured logs on every request, distributed traces, alerts from multiple monitoring systems, change events from CI/CD pipelines, feature flag changes, and infrastructure scaling events. This is millions of events per minute. No human can correlate across all of these signals during an incident by reading dashboards, and no existing tool pre-processes these signals into a form that AI agents (or humans) can consume efficiently.
 
 nthlayer-correlate solves this by continuously pre-correlating signals in the background so that when something goes wrong, the correlated picture is already built. Rather than querying raw events at incident time (which is too slow and too noisy at scale), nthlayer-correlate groups related signals, computes temporal proximity, identifies co-occurring changes, and maintains a rolling window of pre-correlated state. When an incident happens, generating a situational snapshot takes seconds rather than minutes of ad-hoc querying across Prometheus, Loki, Jaeger, and your change history.
 
-This project is in the architecture phase. The design is documented below, and implementation has not yet started.
+Phase 2 Tier 1 is fully implemented. The design documented below reflects the implemented architecture.
 
 ---
 
@@ -232,7 +232,7 @@ nthlayer-correlate follows [Zero Framework Cognition](ZFC.md). The boundary is c
 
 ## Status
 
-nthlayer-correlate is in the architecture phase. The design documented here reflects the target architecture, and implementation has not yet started. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [nthlayer-correlate technical appendix](https://github.com/rsionnach/opensrm/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
+Phase 2 Tier 1 of nthlayer-correlate is fully implemented. The design documented here reflects the implemented architecture. The pre-correlation concept has been validated in the existing OpenSRM ecosystem design (see the [nthlayer-correlate technical appendix](https://github.com/rsionnach/opensrm/blob/main/components/sitrep/sitrep-technical-appendix.md) in the OpenSRM repo).
 
 ---
 

@@ -6,9 +6,9 @@
 
 **Architecture:** Events arrive via HTTP webhook → stored in SQLite FTS5 → pre-correlation engine groups by time/topology/changes (all deterministic transport) → snapshot generator applies token budget and caching → model interprets correlations (judgment) → output as verdicts with lineage. State machine drives snapshot frequency.
 
-**Tech Stack:** Python 3.11+, `verdict` library (path dep: `pip install -e ../../verdicts/lib/python`), `anthropic` SDK, `pyyaml`, `structlog`, raw asyncio TCP (no web framework), SQLite FTS5.
+**Tech Stack:** Python 3.11+, `verdict` library (path dep: `pip install -e ../../nthlayer-learn/lib/python`), `anthropic` SDK, `pyyaml`, `structlog`, raw asyncio TCP (no web framework), SQLite FTS5.
 
-**Prerequisites:** Install verdict library before starting: `pip install -e ../../verdicts/lib/python` (or add to pyproject.toml as path dependency).
+**Prerequisites:** Install verdict library before starting: `pip install -e ../../nthlayer-learn/lib/python` (or add to pyproject.toml as path dependency).
 
 **Spec:** `sitrep/docs/superpowers/specs/2026-03-17-sitrep-phase2-design.md`
 
@@ -414,7 +414,7 @@ class TestCorrelationGroup:
 
 - [ ] **Step 4: Run tests to verify they fail**
 
-Run: `cd /Users/robfox/Documents/GitHub/opensrm-ecosystem/sitrep && uv run pytest tests/test_types.py -v`
+Run: `cd /Users/robfox/Documents/GitHub/opensrm-ecosystem/nthlayer-correlate && uv run pytest tests/test_types.py -v`
 Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 5: Implement `src/sitrep/__init__.py` and `src/sitrep/types.py`**
@@ -437,7 +437,7 @@ Follow the spec exactly. Use `from __future__ import annotations`, `@dataclass`,
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd /Users/robfox/Documents/GitHub/opensrm-ecosystem/sitrep && uv run pytest tests/test_types.py -v`
+Run: `cd /Users/robfox/Documents/GitHub/opensrm-ecosystem/nthlayer-correlate && uv run pytest tests/test_types.py -v`
 Expected: All tests PASS
 
 - [ ] **Step 7: Commit**
@@ -1006,7 +1006,7 @@ git commit -m "feat: add CLI with serve, status, and replay commands (Phase 2.7)
 
 - [ ] **Step 1: Run full test suite**
 
-Run: `cd /Users/robfox/Documents/GitHub/opensrm-ecosystem/sitrep && uv run pytest tests/ -v`
+Run: `cd /Users/robfox/Documents/GitHub/opensrm-ecosystem/nthlayer-correlate && uv run pytest tests/ -v`
 Expected: All tests pass
 
 - [ ] **Step 2: Run replay against all scenarios**

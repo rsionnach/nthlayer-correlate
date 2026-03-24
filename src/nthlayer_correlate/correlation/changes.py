@@ -1,15 +1,18 @@
 """Change candidate indexing. Deterministic transport."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from nthlayer_correlate.store.protocol import EventStore
 from nthlayer_correlate.types import ChangeCandidate, TemporalGroup
 
 
 def _parse_ts(ts: str) -> datetime:
-    """Parse ISO 8601 timestamp."""
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    """Parse ISO 8601 timestamp. Always returns timezone-aware (UTC default)."""
+    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def find_change_candidates(

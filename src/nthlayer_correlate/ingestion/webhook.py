@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
 
@@ -12,6 +13,7 @@ from nthlayer_correlate.types import EventType, SitRepEvent
 
 _MAX_HEADER_SIZE = 65_536   # 64 KB
 _MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
+_CONNECTION_TIMEOUT = 30  # seconds — per-connection deadline to prevent slowloris
 
 _REQUIRED_FIELDS = {"source", "type", "service", "payload"}
 
@@ -77,7 +79,7 @@ class WebhookIngester:
             type=event_type,
             service=data["service"],
             environment=data.get("environment", ""),
-            severity=float(data.get("severity", 0.5)),
+            severity=max(0.0, min(1.0, float(data.get("severity", 0.5)))),
             payload=data["payload"],
             dependencies=data.get("dependencies", []),
             dependents=data.get("dependents", []),
@@ -87,8 +89,6 @@ class WebhookIngester:
         # Apply arithmetic severity pre-scoring if SLO targets are configured
         scored = _severity.pre_score(event, self._slo_targets)
         if scored != event.severity:
-            # Return a new dataclass instance with the updated severity
-            from dataclasses import replace
             event = replace(event, severity=scored)
 
         return event
@@ -96,7 +96,22 @@ class WebhookIngester:
     async def _handle_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        """Handle a single HTTP connection — minimal manual HTTP parsing."""
+        """Handle a single HTTP connection with per-connection timeout."""
+        try:
+            await asyncio.wait_for(
+                self._handle_request(reader, writer), timeout=_CONNECTION_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    async def _handle_request(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        """Inner request handler, called within a per-connection timeout."""
         try:
             # --- Read headers until \r\n\r\n ---
             header_data = b""

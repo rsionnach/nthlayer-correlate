@@ -2,7 +2,7 @@
 
 Situational awareness through automated signal correlation. Continuously pre-correlates observability signals in the background so a correlated picture is ready before an incident is declared.
 
-**Status: Phase 2 implementation plan available. Tier 1 scope: WebhookIngester + SQLite FTS5. Plan: `docs/superpowers/plans/2026-03-18-sitrep-phase2.md`**
+**Status: Phase 2 Tier 1 fully implemented. Tier 1 scope: WebhookIngester + SQLite FTS5.**
 
 ---
 
@@ -68,7 +68,7 @@ src/nthlayer_correlate/
 │   ├── protocol.py   # EventStore Protocol (insert, insert_batch, get_by_time_window, search, get_by_topology, get_recent_changes, expire_old, get_state_hash, get_stats)
 │   └── sqlite.py     # SQLite FTS5, WAL mode, BM25 ranking, Porter stemming
 ├── ingestion/
-│   ├── protocol.py   # Ingester Protocol (async start/stop; on_event handler: Callable[[SitRepEvent], Awaitable[None]])
+│   ├── protocol.py   # Ingester Protocol (async start/stop; on_event handler: Callable[[SitRepEvent], Union[Awaitable[None], None]])
 │   ├── webhook.py    # Raw asyncio TCP HTTP server, POST /events — no framework
 │   └── severity.py   # Severity pre-scoring from SLO targets (pure arithmetic)
 ├── correlation/
@@ -194,7 +194,7 @@ state:
 
 - `nthlayer-correlate serve [--config sitrep.yaml]` — start full pipeline (WebhookIngester + correlation loop)
 - `nthlayer-correlate status [--config sitrep.yaml]` — show agent state, store stats, last snapshot, active groups
-- `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a temp SQLite store; runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); prints group summary; optionally calls model for verdicts
+- `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a temp SQLite store; runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); sub-step order: dedup → severity enrichment → temporal grouping → topology grouping → change_candidates → `_assemble_groups` (uses `CorrelationEngine` helper for group assembly); prints group summary; optionally calls model for verdicts
 
 ### Scenario Fixtures (Phase 2.0 — built first)
 
@@ -208,6 +208,26 @@ Scenario coverage:
 - `misleading-correlation` — coincident events on unrelated services (no topology link); 2 groups, `false_correlation: true`
 - `multi-candidate` — 3 changes before alert; tests disambiguation; all 3 surfaced as change candidates
 - `quiet-period` — quality_score events only; 0 groups expected; verifies no false positives during normal operations
+
+### Scenario Test Coverage (`tests/test_correlation_engine.py`)
+
+`TestCorrelationEngineWithScenarios` drives all five fixtures end-to-end against a real `SQLiteEventStore` and `CorrelationEngine`:
+
+| Test | Scenario | Key assertion |
+|------|----------|---------------|
+| `test_cascading_failure` | cascading-failure | `len(groups) >= 1`; all `expected_outcomes.affected_services` present; `change_candidates` non-empty |
+| `test_quiet_period` | quiet-period | Zero elevated groups (`priority <= 2`) — quality_score events must not produce false P0-P2 groups |
+| `test_misleading_correlation` | misleading-correlation | No single group contains both `auth-service` and `analytics-worker` |
+| `test_simple_causal_chain` | simple-causal-chain | `>= 1` group; payment-api present; deploy change candidate surfaced (`change_type == "deploy"`) |
+| `test_multi_candidate` | multi-candidate | All 3 change candidates surfaced; `change_types` set validated against expected |
+
+Helper `_estimate_severity` logic used when loading scenarios (converts event payload to severity float):
+- `quality_score`: `1.0 - score` (high score = low severity)
+- `alert` / `metric_breach`: `abs(value - threshold) / threshold`, clamped to [0.0, 1.0]
+- `change`: fixed `0.1` (informational)
+- default: `0.5`
+
+The `quiet-period` test filters to `priority <= 2` groups only — this is the correct definition of "elevated" (P0/P1/P2); P3 groups may still be returned without constituting a false positive.
 
 ### Signal Sources
 
