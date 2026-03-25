@@ -9,12 +9,18 @@ Situational awareness through automated signal correlation. Continuously pre-cor
 <!-- AUTO-MANAGED: build-commands -->
 ## Build Commands
 
-- **Install nthlayer-learn library (prerequisite):** `pip install -e ../../nthlayer-learn/lib/python`
+- **Install dependencies:** `uv sync --extra dev`
+- **Install nthlayer-learn (published):** `uv pip install nthlayer-learn`
+- **Install nthlayer-learn (local path):** `pip install -e ../../nthlayer-learn/lib/python`
 - **Run tests:** `uv run pytest tests/ -v`
+- **Run tests (CI flags):** `uv run pytest tests/ -v --tb=short -x`
 - **Run single test file:** `uv run pytest tests/test_types.py -v`
-- **Run CLI:** `uv run nthlayer-correlate serve | status | replay`
+- **Run linting:** `uv run ruff check src/ tests/ --ignore E501,B008,F841,B007,E402,E721,E722,B012,I001`
+- **Run security scan (non-blocking):** `uv pip install pip-audit && uv run pip-audit --progress-spinner off`
+- **Run CLI:** `uv run nthlayer-correlate serve | status | replay | correlate`
 - **TDD workflow:** write failing test → implement → `uv run pytest` verify pass → commit
 - **Commit style:** `feat: <description> (Phase X.Y)`
+- **CI:** pushes/PRs to `main` or `develop`; matrix tests Python 3.11 and 3.12
 <!-- END AUTO-MANAGED -->
 
 ---
@@ -82,7 +88,8 @@ src/nthlayer_correlate/
 │   ├── model.py      # ZFC judgment boundary — prompt assembly, response parsing, degraded mode
 │   └── token.py      # TokenEstimator Protocol; CharDivFourEstimator: len(text) // 4
 ├── state.py          # AgentState machine — deterministic transport-driven transitions
-└── cli.py            # sitrep serve | status | replay
+├── prometheus.py     # fetch_alerts, fetch_metric_breaches, verdict_to_event, load_dependency_graph, blast_radius_services
+└── cli.py            # sitrep serve | status | replay | correlate
 ```
 
 Tier 1 uses SQLite FTS5 + WebhookIngester only. NATS/Kafka and PostgreSQL/ClickHouse are Tier 2+.
@@ -192,9 +199,10 @@ state:
 
 ### CLI Commands
 
-- `nthlayer-correlate serve [--config sitrep.yaml]` — start full pipeline (WebhookIngester + correlation loop)
-- `nthlayer-correlate status [--config sitrep.yaml]` — show agent state, store stats, last snapshot, active groups
-- `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a temp SQLite store; runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); sub-step order: dedup → severity enrichment → temporal grouping → topology grouping → change_candidates → `_assemble_groups` (uses `CorrelationEngine` helper for group assembly); prints group summary; optionally calls model for verdicts
+- `nthlayer-correlate serve [--config sitrep.yaml]` — start full pipeline (WebhookIngester + correlation loop); event queue maxsize=10000, drained single-threaded into SQLiteEventStore before each correlation cycle; VerdictStore opened with try/except fail-open (logs `verdict_store_not_available` if nthlayer-learn unavailable); handles SIGTERM/SIGINT
+- `nthlayer-correlate status [--config sitrep.yaml]` — show agent state, store stats (event_count, min/max timestamp, DB file size); `--store-dir` flag overrides DB path (used in tests)
+- `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a `tempfile.TemporaryDirectory` (auto-cleaned on exit); runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); sub-step order: dedup → severity enrichment → temporal grouping → topology grouping → change_candidates → `_assemble_groups` (uses `CorrelationEngine` helper for group assembly); `window_minutes = max(event_spread_minutes + 1, 5)`; `find_change_candidates` called with `window_minutes + 30`; topology loaded via `_build_topology_dict()` from YAML `topology.services[]`; prints group summary; optionally calls model for verdicts
+- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path>` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; writes a `correlation` verdict (producer.system="sitrep") to the shared verdict store; returns exit 0 on success, 1 if trigger verdict not found
 
 ### Scenario Fixtures (Phase 2.0 — built first)
 
@@ -228,6 +236,21 @@ Helper `_estimate_severity` logic used when loading scenarios (converts event pa
 - default: `0.5`
 
 The `quiet-period` test filters to `priority <= 2` groups only — this is the correct definition of "elevated" (P0/P1/P2); P3 groups may still be returned without constituting a false positive.
+
+### Prometheus Module (`prometheus.py`)
+
+Used by the live `correlate` command. Transport only — no causal reasoning.
+
+- `fetch_alerts(client, prometheus_url, services)` — firing alerts from `/api/v1/alerts`, filtered to given services → `list[SitRepEvent]`
+- `fetch_metric_breaches(client, prometheus_url, services, window_minutes=30)` — three PromQL checks per service:
+  - `slo:error_budget:ratio{service="X"}` breach if `< 0`
+  - `slo:http_request_duration_seconds:p99{service="X"}` breach if `> 0.5s`
+  - `service:http_errors:rate5m{service="X"}` breach if `> 0.01` (1%)
+- `verdict_to_event(verdict)` — converts an nthlayer-learn verdict to `SitRepEvent(type=VERDICT)`
+- `load_dependency_graph(specs_dir)` — loads OpenSRM YAML specs → `dict[service → {tier, dependencies, dependents}]`; also builds reverse-dependency `dependents` list
+- `blast_radius_services(trigger_service, graph)` — walks dependents (upstream consumers) AND dependencies (downstream services) of the trigger service; returns affected set covering both directions
+- `_alert_severity(label)` — maps Prometheus severity label to float: `critical`→0.95, `warning`→0.6, `info`→0.3, default→0.5
+- `_query_instant(client, prometheus_url, query)` — async PromQL instant query; returns `float | None`; returns `None` on HTTP error, empty result, or NaN
 
 ### Signal Sources
 
