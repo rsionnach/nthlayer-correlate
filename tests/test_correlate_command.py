@@ -2,9 +2,7 @@
 """Tests for the correlate CLI subcommand with mocked Prometheus."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
