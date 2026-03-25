@@ -363,6 +363,213 @@ def serve_command(config_path: str | None) -> int:
         return 2
 
 
+def correlate_command(
+    trigger_verdict_id: str,
+    prometheus_url: str,
+    specs_dir: str,
+    verdict_store_path: str,
+    respond_args: str | None = None,
+) -> int:
+    """Correlate signals from a trigger evaluation verdict.
+
+    Reads the trigger verdict from the store, queries Prometheus for correlated
+    signals across the blast radius, runs the correlation engine, and writes
+    a correlation verdict.
+    """
+    from nthlayer_learn import (
+        SQLiteVerdictStore,
+        VerdictFilter,
+        create as verdict_create,
+        link as verdict_link,
+    )
+
+    from nthlayer_correlate.prometheus import (
+        blast_radius_services,
+        fetch_alerts,
+        fetch_metric_breaches,
+        load_dependency_graph,
+        verdict_to_event,
+    )
+
+    log = structlog.get_logger("correlate_command")
+
+    # Open verdict store
+    verdict_store = SQLiteVerdictStore(verdict_store_path)
+
+    # Read trigger verdict
+    trigger = verdict_store.get(trigger_verdict_id)
+    if trigger is None:
+        log.error("Trigger verdict not found", verdict_id=trigger_verdict_id)
+        return 1
+
+    trigger_service = trigger.subject.ref or "unknown"
+    trigger_custom = getattr(trigger.metadata, "custom", {}) or {}
+    log.info(
+        "Trigger verdict loaded",
+        service=trigger_service,
+        slo_name=trigger_custom.get("slo_name"),
+        breach=trigger_custom.get("breach"),
+    )
+
+    # Load dependency graph from specs
+    dep_graph = load_dependency_graph(specs_dir)
+
+    # Compute blast radius
+    affected = blast_radius_services(trigger_service, dep_graph)
+    log.info("Blast radius computed", affected_services=sorted(affected))
+
+    # Gather events from Prometheus and verdict store
+    async def _gather():
+        import httpx
+
+        events: list[SitRepEvent] = []
+
+        async with httpx.AsyncClient() as client:
+            # 1. Prometheus alerts on affected services
+            alerts = await fetch_alerts(client, prometheus_url, affected)
+            events.extend(alerts)
+
+            # 2. Prometheus metric breaches on affected services
+            breaches = await fetch_metric_breaches(client, prometheus_url, affected)
+            events.extend(breaches)
+
+        # 3. Recent evaluation verdicts from store as events
+        recent = verdict_store.query(VerdictFilter(
+            producer_system="nthlayer-measure",
+            subject_type="evaluation",
+            limit=50,
+        ))
+        for v in recent:
+            svc = v.subject.ref or v.subject.service or ""
+            if svc in affected:
+                events.append(verdict_to_event(v))
+
+        return events
+
+    events = asyncio.run(_gather())
+    log.info("Gathered events", count=len(events))
+
+    if not events:
+        log.info("No correlated events found, no correlation verdict needed")
+        return 0
+
+    # Insert events into temp store and run correlation engine
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_store = SQLiteEventStore(os.path.join(tmp_dir, "correlation.db"))
+        tmp_store.insert_batch(events)
+
+        engine = CorrelationEngine()
+        topology = dep_graph if dep_graph else None
+        groups = engine.correlate(tmp_store, window_minutes=30, topology=topology)
+        tmp_store.close()
+
+    if not groups:
+        log.info("No correlation groups formed")
+        return 0
+
+    log.info("Correlation groups", count=len(groups))
+    for g in groups:
+        log.info(
+            "Group",
+            priority=g.priority,
+            services=g.services,
+            event_count=g.event_count,
+            summary=g.summary,
+        )
+
+    # Write correlation verdict
+    root_causes = []
+    for g in groups:
+        for cc in g.change_candidates:
+            root_causes.append({
+                "service": cc.change.service,
+                "type": cc.change.payload.get("change_type", "unknown"),
+                "confidence": max(0.0, min(1.0, 1.0 - cc.temporal_proximity_seconds / 1800.0)) if cc.temporal_proximity_seconds else 0.5,
+                "evidence": cc.change.payload.get("detail", ""),
+            })
+
+    blast_list = [
+        {
+            "service": svc,
+            "impact": "direct" if svc == trigger_service else "downstream",
+            "slo_breached": any(
+                getattr(e, "service", "") == svc
+                for e in events
+                if getattr(e, "type", None) == EventType.METRIC_BREACH
+            ),
+        }
+        for svc in sorted(affected)
+    ]
+
+    # Overall confidence: highest peak severity across all groups, clamped to [0, 1]
+    overall_confidence = min(1.0, max(
+        max(s.peak_severity for s in g.signals) for g in groups
+    )) if groups else 0.5
+
+    corr_verdict = verdict_create(
+        subject={
+            "type": "correlation",
+            "ref": trigger_service,
+            "summary": f"Correlation: {len(groups)} group(s) across {len(affected)} service(s)",
+        },
+        judgment={
+            "action": "flag" if any(g.priority <= 1 for g in groups) else "escalate",
+            "confidence": overall_confidence,
+        },
+        producer={"system": "sitrep"},
+        metadata={"custom": {
+            "trigger_verdict": trigger_verdict_id,
+            "root_causes": root_causes,
+            "blast_radius": blast_list,
+            "groups": len(groups),
+            "events_gathered": len(events),
+        }},
+    )
+    verdict_link(corr_verdict, context=[trigger_verdict_id])
+    verdict_store.put(corr_verdict)
+
+    print(f"Correlation verdict: {corr_verdict.id}")
+    print(f"  Groups: {len(groups)}, Events: {len(events)}, Blast radius: {len(affected)} services")
+
+    # Forward to nthlayer-respond if respond_args is set
+    if respond_args:
+        import json
+        import subprocess
+
+        try:
+            args_dict = json.loads(respond_args)
+        except json.JSONDecodeError:
+            log.error("Invalid --respond-args JSON", raw=respond_args)
+            return 1
+
+        # Only allow known respond flags to prevent injection
+        allowed_keys = {"specs-dir", "config", "notify"}
+        for key in args_dict:
+            if key not in allowed_keys:
+                log.warning("Ignoring unknown respond arg", key=key)
+
+        cmd = [
+            "nthlayer-respond", "respond",
+            "--trigger-verdict", corr_verdict.id,
+            "--verdict-store", verdict_store_path,
+        ]
+        for key, value in args_dict.items():
+            if key in allowed_keys:
+                cmd.extend([f"--{key}", str(value)])
+
+        log.info("Invoking nthlayer-respond", cmd=cmd)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                log.error("nthlayer-respond failed", returncode=result.returncode, stderr=result.stderr)
+            else:
+                print(result.stdout)
+        except FileNotFoundError:
+            log.error("nthlayer-respond not found on PATH")
+
+    return 0
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -395,6 +602,15 @@ def main() -> None:
         "--no-model", action="store_true", help="Skip model calls"
     )
 
+    # correlate (live data — trigger from verdict)
+    corr_parser = subparsers.add_parser("correlate", help="Correlate signals from a trigger verdict")
+    corr_parser.add_argument("--trigger-verdict", required=True, help="Evaluation verdict ID that triggered correlation")
+    corr_parser.add_argument("--prometheus-url", required=True, help="Prometheus base URL")
+    corr_parser.add_argument("--specs-dir", required=True, help="Directory of OpenSRM spec YAMLs")
+    corr_parser.add_argument("--verdict-store", default="verdicts.db", help="Path to verdict SQLite DB")
+    # Forward flags for downstream components (passed through, not parsed by correlate)
+    corr_parser.add_argument("--respond-args", default=None, help="JSON-encoded args to forward to nthlayer-respond")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -415,6 +631,16 @@ def main() -> None:
                     store_dir=tmp_dir,
                 )
             )
+    elif args.command == "correlate":
+        sys.exit(
+            correlate_command(
+                trigger_verdict_id=args.trigger_verdict,
+                prometheus_url=args.prometheus_url,
+                specs_dir=args.specs_dir,
+                verdict_store_path=args.verdict_store,
+                respond_args=args.respond_args,
+            )
+        )
 
 
 if __name__ == "__main__":
