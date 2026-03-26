@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nthlayer-correlate"
-version = "0.2.0"
-description = "SitRep — Situational awareness through automated signal correlation"
+version = "0.2.1"
+description = "Situational awareness through automated signal correlation"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 dependencies = [
