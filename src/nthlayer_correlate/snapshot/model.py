@@ -13,13 +13,6 @@ class ModelInterface:
     def __init__(self, model: str = "claude-sonnet-4-20250514", max_tokens: int = 4096):
         self._model = model
         self._max_tokens = max_tokens
-        self._client = None  # lazy init
-
-    def _get_client(self):
-        if self._client is None:
-            import anthropic
-            self._client = anthropic.Anthropic()
-        return self._client
 
     async def interpret(
         self,
@@ -57,7 +50,7 @@ class ModelInterface:
                     "reasoning": assessment.get("reasoning", ""),
                     "tags": assessment.get("tags", []),
                 },
-                producer={"system": "sitrep", "model": self._model},
+                producer={"system": "nthlayer-correlate", "model": self._model},
             )
             child_verdicts.append(v)
             if verdict_store:
@@ -90,7 +83,7 @@ class ModelInterface:
                 "reasoning": f"Assessed {len(assessments)} correlation group(s)",
                 "tags": list(set(tags)),
             },
-            producer={"system": "sitrep", "model": self._model},
+            producer={"system": "nthlayer-correlate", "model": self._model},
         )
         parent.lineage.children = [v.id for v in child_verdicts]
         if verdict_store:
@@ -99,18 +92,18 @@ class ModelInterface:
         return child_verdicts + [parent]
 
     async def _call_model(self, prompt: str) -> str:
-        """Call the Anthropic API."""
+        """Call the LLM via the shared nthlayer-common wrapper."""
         import asyncio
-        client = self._get_client()
+        from nthlayer_common.llm import llm_call
 
-        response = await asyncio.to_thread(
-            client.messages.create,
+        result = await asyncio.to_thread(
+            llm_call,
+            system=self._build_system_prompt(),
+            user=prompt,
             model=self._model,
             max_tokens=self._max_tokens,
-            system=self._build_system_prompt(),
-            messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
+        return result.text
 
     def _build_system_prompt(self) -> str:
         return """You are SitRep, a signal correlation agent. Analyze the correlation groups below and provide your assessment as JSON.
@@ -177,7 +170,7 @@ Respond with ONLY valid JSON in this format:
                     "reasoning": "template-based, model unavailable",
                     "tags": ["degraded"],
                 },
-                producer={"system": "sitrep"},
+                producer={"system": "nthlayer-correlate"},
             )
             child_verdicts.append(v)
 
@@ -194,7 +187,7 @@ Respond with ONLY valid JSON in this format:
                 "reasoning": "template-based, model unavailable",
                 "tags": ["degraded"],
             },
-            producer={"system": "sitrep"},
+            producer={"system": "nthlayer-correlate"},
         )
         parent.lineage.children = [v.id for v in child_verdicts]
 

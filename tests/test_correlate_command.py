@@ -183,7 +183,7 @@ def test_correlate_command_writes_correlation_verdict(specs_dir, tmp_path):
     assert len(corr_verdicts) >= 1
     cv = corr_verdicts[0]
     assert cv.subject.ref == "fraud-detect"
-    assert cv.producer.system == "sitrep"
+    assert cv.producer.system == "nthlayer-correlate"
     assert trigger.id in cv.lineage.context
 
 

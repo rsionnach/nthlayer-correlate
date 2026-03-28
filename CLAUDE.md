@@ -10,7 +10,7 @@ Situational awareness through automated signal correlation. Continuously pre-cor
 ## Build Commands
 
 - **Install dependencies:** `uv sync --extra dev`
-- **Install nthlayer-learn (published):** `uv pip install nthlayer-learn`
+- **Install nthlayer-learn (published):** `uv pip install "nthlayer-learn>=0.2.0"`
 - **Install nthlayer-learn (local path):** `pip install -e ../../nthlayer-learn/lib/python`
 - **Run tests:** `uv run pytest tests/ -v`
 - **Run tests (CI flags):** `uv run pytest tests/ -v --tb=short -x`
@@ -89,7 +89,8 @@ src/nthlayer_correlate/
 │   └── token.py      # TokenEstimator Protocol; CharDivFourEstimator: len(text) // 4
 ├── state.py          # AgentState machine — deterministic transport-driven transitions
 ├── prometheus.py     # fetch_alerts, fetch_metric_breaches, verdict_to_event, load_dependency_graph, blast_radius_services
-└── cli.py            # sitrep serve | status | replay | correlate
+├── reasoning.py      # Reasoning layer — LLM causal analysis between group assembly and verdict creation; provider-agnostic (Anthropic + OpenAI); degraded mode: confidence=0.0, tagged degraded=True
+└── cli.py            # serve | status | replay | correlate
 ```
 
 Tier 1 uses SQLite FTS5 + WebhookIngester only. NATS/Kafka and PostgreSQL/ClickHouse are Tier 2+.
@@ -202,7 +203,7 @@ state:
 - `nthlayer-correlate serve [--config sitrep.yaml]` — start full pipeline (WebhookIngester + correlation loop); event queue maxsize=10000, drained single-threaded into SQLiteEventStore before each correlation cycle; VerdictStore opened with try/except fail-open (logs `verdict_store_not_available` if nthlayer-learn unavailable); handles SIGTERM/SIGINT
 - `nthlayer-correlate status [--config sitrep.yaml]` — show agent state, store stats (event_count, min/max timestamp, DB file size); `--store-dir` flag overrides DB path (used in tests)
 - `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a `tempfile.TemporaryDirectory` (auto-cleaned on exit); runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); sub-step order: dedup → severity enrichment → temporal grouping → topology grouping → change_candidates → `_assemble_groups` (uses `CorrelationEngine` helper for group assembly); `window_minutes = max(event_spread_minutes + 1, 5)`; `find_change_candidates` called with `window_minutes + 30`; topology loaded via `_build_topology_dict()` from YAML `topology.services[]`; prints group summary; optionally calls model for verdicts
-- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path>` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; writes a `correlation` verdict (producer.system="sitrep") to the shared verdict store; returns exit 0 on success, 1 if trigger verdict not found
+- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path> [--reasoning|--no-reasoning] [--model <provider/model>]` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; runs reasoning layer (model-based causal analysis if API key set, heuristic fallback otherwise); writes a `correlation` verdict (`producer.system="nthlayer-correlate"`) to the shared verdict store; `metadata.custom` includes `reasoning_mode: "model"|"heuristic"` and `reasoning: <result>|null`; returns exit 0 on success, 1 if trigger verdict not found. `--no-reasoning` disables model call entirely (heuristic only). `--model` accepts `"provider/model"` format (e.g. `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4-20250514"`)
 
 ### Scenario Fixtures (Phase 2.0 — built first)
 
@@ -236,6 +237,73 @@ Helper `_estimate_severity` logic used when loading scenarios (converts event pa
 - default: `0.5`
 
 The `quiet-period` test filters to `priority <= 2` groups only — this is the correct definition of "elevated" (P0/P1/P2); P3 groups may still be returned without constituting a false positive.
+
+### Model Interface Test Coverage (`tests/test_snapshot_model.py`)
+
+`TestModelInterface` covers the ZFC judgment boundary in `snapshot/model.py`:
+
+| Test | Key assertion |
+|------|---------------|
+| `test_successful_model_call_produces_verdicts` | 2 verdicts (1 child + 1 parent); child has correct action/confidence/producer; parent links child via `lineage.children` |
+| `test_model_failure_returns_template_verdicts` | 3 verdicts (2 children + 1 parent); all `confidence=0.0`; `reasoning` contains "template-based"; tag "degraded" present |
+| `test_verdict_lineage_parent_links_children` | Parent `lineage.children` contains all child IDs |
+| `test_escalate_bubbles_to_parent` | Any child `action="escalate"` → parent `action="escalate"` |
+| `test_invalid_action_defaults_to_flag` | Action `"watch"` (not in valid set) → defaults to `"flag"` |
+| `test_confidence_clamped` | Confidence `1.5` → clamped to `1.0` |
+| `test_malformed_json_falls_back_to_template` | Non-JSON response → all verdicts `confidence=0.0` |
+| `test_verdicts_stored_when_store_provided` | `mock_store.put` called 2× (child + parent) |
+
+### Prometheus / Correlate Command Test Coverage (`tests/test_correlate_command.py`)
+
+Covers the live `correlate` subcommand and `prometheus.py` module:
+
+| Test | Key assertion |
+|------|---------------|
+| `test_load_dependency_graph` | Parses SRM YAML; builds forward deps and reverse `dependents` |
+| `test_load_dependency_graph_empty` | Returns `{}` for empty dir |
+| `test_blast_radius_includes_trigger_and_dependents` | Includes trigger, its dependents, and its dependencies |
+| `test_blast_radius_leaf_service` | Leaf service still pulls in its dependencies |
+| `test_verdict_to_event` | Produces `EventType.VERDICT`; `payload["verdict_id"]` and `payload["breach"]` set correctly |
+| `test_correlate_command_writes_correlation_verdict` | Full integration with mocked Prometheus; correlation verdict written with `lineage.context` containing trigger ID; `subject.ref=service`, `producer.system="nthlayer-correlate"` |
+| `test_correlate_command_missing_verdict` | Returns exit code 1 when trigger verdict not found |
+
+Mocking: `fetch_alerts` and `fetch_metric_breaches` patched via `unittest.mock.patch` on `nthlayer_correlate.prometheus`.
+
+### Reasoning Layer Test Coverage (`tests/test_reasoning.py`)
+
+| Test class | Key assertions |
+|------------|----------------|
+| `TestDegradedReasoning` | `degraded=True`, `confidence=0.0`, reason string propagated to `overall_assessment` and per-group `reasoning` |
+| `TestParseReasoningResponse` | Valid JSON parsed; markdown fences stripped; unknown group IDs filtered; confidence clamped to [0.0, 1.0]; malformed JSON raises `JSONDecodeError` |
+| `TestBuildUserPrompt` | DEPENDENCY GRAPH section present; group details (ID, services, change candidates) included; SLO TARGETS section present when provided; topology block included for multi-service groups |
+| `TestBuildSystemPrompt` | Contains "dependency", "temporal", "cascading", "JSON" |
+| `TestReasoningAvailable` | Returns `True` with either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; `False` without either |
+| `TestReasonAboutCorrelations` | Successful call → `degraded=False`, correct confidence; empty groups → degraded; API error → degraded; malformed response → degraded; timeout → degraded |
+| `TestCorrelateCommandReasoning` | `--no-reasoning` → `reasoning_mode=heuristic`, `reasoning=None`; API key absent → heuristic fallback; API key present + model success → `reasoning_mode=model`, confidence from model, `overall_assessment` in `subject.summary` |
+
+### Reasoning Layer (`reasoning.py`)
+
+Sits between `CorrelationEngine.correlate()` group assembly and verdict creation. Calls an LLM to assess causal relationships. Additive — `--no-reasoning` produces identical verdict structure to pre-reasoning behavior.
+
+**Public API:**
+- `reasoning_available() -> bool` — returns `True` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set
+- `reason_about_correlations(groups, dependency_graph, slo_targets=None, model="claude-sonnet-4-20250514", max_tokens=4096, timeout=30) -> dict` — calls LLM via `nthlayer_common.llm.llm_call`; model accepts `"provider/model"` format; falls back to `_degraded_reasoning()` on any exception
+
+**Result structure:**
+```python
+{
+    "groups": [{"group_id", "root_cause", "confidence", "reasoning", "recommended_actions", "is_causal", "degraded"}],
+    "overall_assessment": str,
+    "overall_confidence": float,   # clamped to [0.0, 1.0]
+    "degraded": bool,
+}
+```
+
+**Degraded mode:** `confidence=0.0`, `degraded=True`, `root_cause=None` — transport continues, judgment pauses (ZFC fail-open). Triggered by: no groups, API error, malformed JSON response, timeout.
+
+**Provider routing:** delegates to `nthlayer_common.llm.llm_call` via `asyncio.to_thread`. Model format `"provider/model"` — provider selection (anthropic, openai, ollama, etc.) handled by the shared wrapper in `nthlayer-common`.
+
+**Prompt structure:** System prompt — reliability engineer persona, JSON-only output format, causal reasoning rules (dependency direction, temporal proximity, cascading failure patterns). User prompt — DEPENDENCY GRAPH block, optional SLO TARGETS block, per-group detail (signals capped at 5 events each, change candidates, topology). `_compact_payload` truncates large dict values and long lists to stay within token budget.
 
 ### Prometheus Module (`prometheus.py`)
 
@@ -279,11 +347,11 @@ Change event schema includes AI-specific change types: model version swaps, prom
 
 ## Verdict Integration
 
-Verdict output is fully specified in Phase 2 (see `docs/superpowers/specs/2026-03-17-sitrep-phase2-design.md`). nthlayer-correlate depends on the `nthlayer-learn` library (path-based: `pip install -e ../../nthlayer-learn/lib/python`).
+Verdict output is fully specified in Phase 2 (see `docs/superpowers/specs/2026-03-17-sitrep-phase2-design.md`). nthlayer-correlate depends on the `nthlayer-learn` library (path-based: `pip install -e ../../nthlayer-learn/lib/python`) and `nthlayer-common` (path-based: `../nthlayer-common`, installed via `uv sync`).
 
 **Output:** Each correlation assessment → `verdict.create()` with:
-- `subject.type = "correlation"`, `producer.system = "sitrep"`
-- `judgment.action = "flag" | "watch" | "escalate"`, `judgment.confidence = 0.0-1.0`
+- `subject.type = "correlation"`, `producer.system = "nthlayer-correlate"`
+- `judgment.action = "flag" | "escalate" | "defer"`, `judgment.confidence = 0.0-1.0`; invalid actions default to `"flag"`; confidence clamped to `[0.0, 1.0]`
 - Parent snapshot verdict links children via `lineage.children`
 
 **Ingestion:** `verdict` is a valid `EventType` alongside `alert`, `metric_breach`, `change`, `quality_score`. nthlayer-measure quality verdicts arrive via the same ingestion path and participate in pre-correlation.

@@ -369,6 +369,8 @@ def correlate_command(
     specs_dir: str,
     verdict_store_path: str,
     respond_args: str | None = None,
+    reasoning: bool = True,
+    reasoning_model: str | None = None,
 ) -> int:
     """Correlate signals from a trigger evaluation verdict.
 
@@ -477,16 +479,60 @@ def correlate_command(
             summary=g.summary,
         )
 
-    # Write correlation verdict
+    # Reasoning layer: model-based causal analysis if enabled, else heuristic
+    reasoning_result = None
+    reasoning_mode = "heuristic"
+
+    if reasoning:
+        from nthlayer_correlate.reasoning import reason_about_correlations, reasoning_available
+
+        if reasoning_available():
+            kwargs = {}
+            if reasoning_model:
+                kwargs["model"] = reasoning_model
+            reasoning_result = asyncio.run(
+                reason_about_correlations(groups, dep_graph, **kwargs)
+            )
+            if not reasoning_result.get("degraded", False):
+                reasoning_mode = "model"
+                log.info("Reasoning complete", mode=reasoning_mode,
+                         overall_confidence=reasoning_result.get("overall_confidence"))
+            else:
+                log.info("Reasoning degraded, falling back to heuristic",
+                         reason=reasoning_result.get("overall_assessment"))
+                reasoning_result = None
+        else:
+            log.info("Reasoning skipped: no LLM API key set (ANTHROPIC_API_KEY or OPENAI_API_KEY)")
+    else:
+        log.info("Reasoning disabled via --no-reasoning")
+
+    # Build root causes and confidence from reasoning or heuristic
+    reasoning_by_group = {}
+    if reasoning_result and reasoning_mode == "model":
+        for ga in reasoning_result.get("groups", []):
+            reasoning_by_group[ga["group_id"]] = ga
+
     root_causes = []
     for g in groups:
-        for cc in g.change_candidates:
+        ga = reasoning_by_group.get(g.id)
+        if ga and ga.get("root_cause"):
+            # Model-provided root cause
             root_causes.append({
-                "service": cc.change.service,
-                "type": cc.change.payload.get("change_type", "unknown"),
-                "confidence": max(0.0, min(1.0, 1.0 - cc.temporal_proximity_seconds / 1800.0)) if cc.temporal_proximity_seconds else 0.5,
-                "evidence": cc.change.payload.get("detail", ""),
+                "service": g.services[0] if g.services else trigger_service,
+                "type": ga["root_cause"],
+                "confidence": ga["confidence"],
+                "evidence": ga.get("reasoning", ""),
+                "recommended_actions": ga.get("recommended_actions", []),
             })
+        else:
+            # Heuristic fallback: temporal proximity
+            for cc in g.change_candidates:
+                root_causes.append({
+                    "service": cc.change.service,
+                    "type": cc.change.payload.get("change_type", "unknown"),
+                    "confidence": max(0.0, min(1.0, 1.0 - cc.temporal_proximity_seconds / 1800.0)) if cc.temporal_proximity_seconds else 0.5,
+                    "evidence": cc.change.payload.get("detail", ""),
+                })
 
     blast_list = [
         {
@@ -501,28 +547,45 @@ def correlate_command(
         for svc in sorted(affected)
     ]
 
-    # Overall confidence: highest peak severity across all groups, clamped to [0, 1]
-    overall_confidence = min(1.0, max(
-        max(s.peak_severity for s in g.signals) for g in groups
-    )) if groups else 0.5
+    # Overall confidence: model reasoning or peak severity heuristic
+    if reasoning_result and reasoning_mode == "model":
+        overall_confidence = reasoning_result["overall_confidence"]
+    else:
+        overall_confidence = min(1.0, max(
+            max(s.peak_severity for s in g.signals) for g in groups
+        )) if groups else 0.5
+
+    # Build verdict summary: prefer model assessment over template
+    if reasoning_result and reasoning_mode == "model" and reasoning_result.get("overall_assessment"):
+        verdict_summary = reasoning_result["overall_assessment"]
+    elif root_causes:
+        verdict_summary = (
+            f"{root_causes[0].get('service', trigger_service)} "
+            f"{root_causes[0].get('type', 'incident')} — "
+            f"{len(blast_list)} services in blast radius"
+        )
+    else:
+        verdict_summary = f"{trigger_service} incident — {len(blast_list)} services affected"
 
     corr_verdict = verdict_create(
         subject={
             "type": "correlation",
             "ref": trigger_service,
-            "summary": f"Correlation: {len(groups)} group(s) across {len(affected)} service(s)",
+            "summary": verdict_summary,
         },
         judgment={
             "action": "flag" if any(g.priority <= 1 for g in groups) else "escalate",
             "confidence": overall_confidence,
         },
-        producer={"system": "sitrep"},
+        producer={"system": "nthlayer-correlate"},
         metadata={"custom": {
             "trigger_verdict": trigger_verdict_id,
             "root_causes": root_causes,
             "blast_radius": blast_list,
             "groups": len(groups),
             "events_gathered": len(events),
+            "reasoning_mode": reasoning_mode,
+            "reasoning": reasoning_result if reasoning_mode == "model" else None,
         }},
     )
     verdict_link(corr_verdict, context=[trigger_verdict_id])
@@ -608,6 +671,11 @@ def main() -> None:
     corr_parser.add_argument("--prometheus-url", required=True, help="Prometheus base URL")
     corr_parser.add_argument("--specs-dir", required=True, help="Directory of OpenSRM spec YAMLs")
     corr_parser.add_argument("--verdict-store", default="verdicts.db", help="Path to verdict SQLite DB")
+    # Reasoning layer flags
+    reasoning_group = corr_parser.add_mutually_exclusive_group()
+    reasoning_group.add_argument("--reasoning", action="store_true", default=True, help="Enable model-based causal reasoning (default if API key set)")
+    reasoning_group.add_argument("--no-reasoning", action="store_true", help="Disable model reasoning, use heuristic only")
+    corr_parser.add_argument("--model", default=None, help="Model for reasoning (e.g. 'openai/gpt-4o', 'anthropic/claude-sonnet-4-20250514')")
     # Forward flags for downstream components (passed through, not parsed by correlate)
     corr_parser.add_argument("--respond-args", default=None, help="JSON-encoded args to forward to nthlayer-respond")
 
@@ -639,6 +707,8 @@ def main() -> None:
                 specs_dir=args.specs_dir,
                 verdict_store_path=args.verdict_store,
                 respond_args=args.respond_args,
+                reasoning=not args.no_reasoning,
+                reasoning_model=args.model,
             )
         )
 

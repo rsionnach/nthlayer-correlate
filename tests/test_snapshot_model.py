@@ -50,7 +50,7 @@ class TestModelInterface:
         assert child.subject.type == "correlation"
         assert child.judgment.action == "flag"
         assert child.judgment.confidence == 0.74
-        assert child.producer.system == "sitrep"
+        assert child.producer.system == "nthlayer-correlate"
         assert parent.lineage.children == [child.id]
 
     @pytest.mark.asyncio
