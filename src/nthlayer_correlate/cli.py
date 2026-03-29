@@ -32,6 +32,21 @@ logger = structlog.get_logger()
 
 REFERENCE_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
+# Confidence decay window for temporal proximity heuristic (30 minutes)
+_PROXIMITY_WINDOW_SECONDS = 1800.0
+
+
+def _proximity_confidence(seconds: float | None) -> float:
+    """Heuristic confidence from temporal proximity of a change to a signal.
+
+    Decays linearly from 1.0 (simultaneous) to 0.0 (30 minutes apart).
+    Returns 0.5 for unknown proximity.
+    """
+    if not seconds:
+        return 0.5
+    from nthlayer_common.parsing import clamp
+    return clamp(1.0 - seconds / _PROXIMITY_WINDOW_SECONDS)
+
 
 def parse_relative_time(at_str: str) -> str:
     """Parse 'T+Nm' to ISO 8601."""
@@ -530,7 +545,7 @@ def correlate_command(
                 root_causes.append({
                     "service": cc.change.service,
                     "type": cc.change.payload.get("change_type", "unknown"),
-                    "confidence": max(0.0, min(1.0, 1.0 - cc.temporal_proximity_seconds / 1800.0)) if cc.temporal_proximity_seconds else 0.5,
+                    "confidence": _proximity_confidence(cc.temporal_proximity_seconds),
                     "evidence": cc.change.payload.get("detail", ""),
                 })
 

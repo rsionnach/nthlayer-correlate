@@ -1,4 +1,8 @@
-"""Model interface — the ZFC judgment boundary."""
+"""Model interface — the ZFC judgment boundary.
+
+Used by: the `serve` and `replay` CLI subcommands (continuous snapshot generation).
+See also: reasoning.py which serves the `correlate` subcommand (live triggered).
+"""
 from __future__ import annotations
 
 import json
@@ -133,12 +137,9 @@ Respond with ONLY valid JSON in this format:
 
     def _parse_response(self, response_text: str, groups: list[CorrelationGroup]) -> list[dict]:
         """Parse model JSON response."""
-        # Strip markdown fences if present
-        text = response_text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        from nthlayer_common.parsing import clamp, strip_markdown_fences
 
+        text = strip_markdown_fences(response_text)
         data = json.loads(text)
         assessments = data.get("assessments", [])
 
@@ -147,7 +148,7 @@ Respond with ONLY valid JSON in this format:
         for a in assessments:
             if a.get("action") not in valid_actions:
                 a["action"] = "flag"
-            a["confidence"] = max(0.0, min(1.0, float(a.get("confidence", 0.5))))
+            a["confidence"] = clamp(float(a.get("confidence", 0.5)))
 
         return assessments
 

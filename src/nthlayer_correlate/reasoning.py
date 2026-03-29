@@ -1,5 +1,8 @@
 """Reasoning layer for correlation groups.
 
+Used by: the `correlate` CLI subcommand (live Prometheus-triggered correlation).
+See also: snapshot/model.py which serves the `serve` and `replay` subcommands.
+
 Sits between CorrelationEngine.correlate() group assembly and verdict creation.
 Calls an LLM to assess causal relationships, root causes, and recommended actions.
 Provider-agnostic via nthlayer-common wrapper (Anthropic, OpenAI, Ollama, etc.).
@@ -237,15 +240,9 @@ def _parse_reasoning_response(
     groups: list[CorrelationGroup],
 ) -> dict:
     """Parse model JSON response into structured reasoning."""
-    text = response_text.strip()
+    from nthlayer_common.parsing import clamp, strip_markdown_fences
 
-    # Strip markdown fences
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(
-            lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
-        )
-
+    text = strip_markdown_fences(response_text)
     data = json.loads(text)
 
     # Validate and normalize group assessments
@@ -259,8 +256,7 @@ def _parse_reasoning_response(
             logger.debug("reasoning_unknown_group_id", group_id=gid)
             continue
 
-        confidence = ga.get("confidence", 0.5)
-        confidence = max(0.0, min(1.0, float(confidence)))
+        confidence = clamp(float(ga.get("confidence", 0.5)))
 
         normalized.append({
             "group_id": gid,
@@ -272,8 +268,7 @@ def _parse_reasoning_response(
             "degraded": False,
         })
 
-    overall_confidence = data.get("overall_confidence", 0.0)
-    overall_confidence = max(0.0, min(1.0, float(overall_confidence)))
+    overall_confidence = clamp(float(data.get("overall_confidence", 0.0)))
 
     return {
         "groups": normalized,
