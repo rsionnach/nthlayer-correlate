@@ -230,16 +230,25 @@ class TestReasoningAvailable:
     def test_available_with_anthropic_key(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("NTHLAYER_MODEL", raising=False)
         assert reasoning_available() is True
 
     def test_available_with_openai_key(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "test")
+        monkeypatch.delenv("NTHLAYER_MODEL", raising=False)
+        assert reasoning_available() is True
+
+    def test_available_with_nthlayer_model(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("NTHLAYER_MODEL", "ollama/llama3.1")
         assert reasoning_available() is True
 
     def test_not_available_without_keys(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("NTHLAYER_MODEL", raising=False)
         assert reasoning_available() is False
 
 

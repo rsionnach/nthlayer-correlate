@@ -19,9 +19,14 @@ logger = structlog.get_logger(__name__)
 
 
 def reasoning_available() -> bool:
-    """Check if any supported LLM provider API key is set."""
+    """Check if an LLM provider is configured and reachable.
+
+    Returns True if NTHLAYER_MODEL is set (any provider, including keyless
+    ones like Ollama) or if an API key for a cloud provider is set.
+    """
     return bool(
-        os.environ.get("ANTHROPIC_API_KEY")
+        os.environ.get("NTHLAYER_MODEL")
+        or os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
     )
 
@@ -30,11 +35,11 @@ async def reason_about_correlations(
     groups: list[CorrelationGroup],
     dependency_graph: dict,
     slo_targets: dict | None = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str | None = None,
     max_tokens: int = 4096,
     timeout: int = 30,
 ) -> dict:
-    """Call Claude to reason about pre-correlated groups.
+    """Call an LLM to reason about pre-correlated groups.
 
     Returns structured reasoning dict with keys:
       - groups: list of per-group reasoning (root_cause, confidence, reasoning, recommended_actions)
@@ -96,7 +101,7 @@ def _degraded_reasoning(
 async def _call_model(
     system_prompt: str,
     user_prompt: str,
-    model: str,
+    model: str | None,
     max_tokens: int,
     timeout: int,
 ) -> str:

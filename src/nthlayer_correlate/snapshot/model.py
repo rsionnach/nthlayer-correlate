@@ -10,8 +10,8 @@ logger = structlog.get_logger()
 
 
 class ModelInterface:
-    def __init__(self, model: str = "claude-sonnet-4-20250514", max_tokens: int = 4096):
-        self._model = model
+    def __init__(self, model: str | None = None, max_tokens: int = 4096):
+        self._model = model  # None → llm_call uses NTHLAYER_MODEL env var
         self._max_tokens = max_tokens
 
     async def interpret(
