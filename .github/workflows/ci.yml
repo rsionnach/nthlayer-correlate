@@ -26,9 +26,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: |
-          uv sync --extra dev
-          uv pip install "nthlayer-learn>=0.2.0"
+        run: uv sync --extra dev --no-sources
 
       - name: Run linting
         run: uv run ruff check src/ tests/ --ignore E501,B008,F841,B007,E402,E721,E722,B012,I001
