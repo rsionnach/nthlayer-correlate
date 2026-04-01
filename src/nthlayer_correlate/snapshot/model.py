@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import json
 import structlog
+from pathlib import Path
+
+from nthlayer_common.prompts import load_prompt
+
+_PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "snapshot.yaml"
 
 from nthlayer_correlate.types import CorrelationGroup
 
@@ -110,30 +115,8 @@ class ModelInterface:
         return result.text
 
     def _build_system_prompt(self) -> str:
-        return """You are SitRep, a signal correlation agent. Analyze the correlation groups below and provide your assessment as JSON.
-
-For each correlation group, assess:
-1. Whether the signals are causally related (or just temporally coincidental)
-2. Your confidence in the causal assessment (0.0-1.0)
-3. Recommended action: "flag" (needs investigation), "defer" (watch and wait), or "escalate" (needs immediate attention)
-4. Brief reasoning
-
-If you recommend a state transition, include a tag like "state_transition:alert" or "state_transition:incident".
-
-Respond with ONLY valid JSON in this format:
-{
-  "assessments": [
-    {
-      "group_id": "cg-xxx",
-      "service": "primary-affected-service",
-      "summary": "brief description",
-      "action": "flag",
-      "confidence": 0.74,
-      "reasoning": "explanation",
-      "tags": ["deploy", "latency"]
-    }
-  ]
-}"""
+        spec = load_prompt(_PROMPT_PATH)
+        return spec.system
 
     def _parse_response(self, response_text: str, groups: list[CorrelationGroup]) -> list[dict]:
         """Parse model JSON response."""

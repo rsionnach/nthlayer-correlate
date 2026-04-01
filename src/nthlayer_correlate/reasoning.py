@@ -13,10 +13,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 
 import structlog
 
+from nthlayer_common.prompts import load_prompt
 from nthlayer_correlate.types import CorrelationGroup
+
+_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "reasoning.yaml"
 
 logger = structlog.get_logger(__name__)
 
@@ -123,32 +127,8 @@ async def _call_model(
 
 
 def _build_system_prompt() -> str:
-    return """You are a reliability engineer analyzing pre-correlated observability signals. Your job is to assess causal relationships between correlated signal groups using dependency graph direction, temporal proximity, and cascading failure patterns.
-
-You receive pre-correlated groups (transport has already done temporal grouping, topology grouping, deduplication, and change candidate indexing). You provide the judgment: is this correlation causal or coincidental? What is the likely root cause? What should the team do?
-
-Rules:
-- Dependency direction matters: if service A depends on B, and B degrades first, B is likely the root cause, not A.
-- Temporal proximity matters: changes within minutes of signal onset are stronger candidates than changes 30 minutes prior.
-- Cascading failures follow dependency chains: A→B→C means C's failure can cascade to B then A.
-- Multiple changes near signal onset require disambiguation: which change best explains the observed failure mode?
-- Coincidental correlation (unrelated services, no topology link, different failure modes) should be flagged as non-causal.
-
-Respond with ONLY valid JSON in this format:
-{
-  "groups": [
-    {
-      "group_id": "cg-xxx",
-      "root_cause": "description of likely root cause, or null if unclear",
-      "confidence": 0.0-1.0,
-      "reasoning": "explanation of causal assessment",
-      "recommended_actions": ["action1", "action2"],
-      "is_causal": true
-    }
-  ],
-  "overall_assessment": "brief overall situation summary",
-  "overall_confidence": 0.0-1.0
-}"""
+    spec = load_prompt(_PROMPT_PATH)
+    return spec.system
 
 
 def _build_user_prompt(
