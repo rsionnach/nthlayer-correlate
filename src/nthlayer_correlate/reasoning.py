@@ -138,17 +138,39 @@ def _build_user_prompt(
 ) -> str:
     sections = []
 
-    # Dependency graph
+    # Cap groups at 10 — drop P3 (lowest priority) first to stay within token budget
+    MAX_GROUPS = 10
+    if len(groups) > MAX_GROUPS:
+        groups = sorted(groups, key=lambda g: g.priority)[:MAX_GROUPS]
+
+    # Collect services mentioned in groups for dependency graph pruning
+    relevant_services = set()
+    for g in groups:
+        relevant_services.update(g.services)
+        for cc in g.change_candidates:
+            relevant_services.add(cc.change.service)
+
+    # Dependency graph — pruned to services in correlation groups + 1 hop
     if dependency_graph:
+        # Add 1 hop of deps/dependents
+        extended = set(relevant_services)
+        for svc in relevant_services:
+            info = dependency_graph.get(svc, {})
+            extended.update(info.get("dependencies", []))
+            extended.update(info.get("dependents", []))
+
         dep_lines = []
         for svc, info in sorted(dependency_graph.items()):
+            if svc not in extended:
+                continue
             deps = info.get("dependencies", [])
             dependents = info.get("dependents", [])
             tier = info.get("tier", "standard")
             dep_lines.append(
                 f"  {svc} (tier={tier}): depends_on={deps}, depended_by={dependents}"
             )
-        sections.append("DEPENDENCY GRAPH:\n" + "\n".join(dep_lines))
+        if dep_lines:
+            sections.append("DEPENDENCY GRAPH:\n" + "\n".join(dep_lines))
 
     # SLO targets
     if slo_targets:
