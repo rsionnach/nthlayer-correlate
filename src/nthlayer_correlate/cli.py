@@ -606,6 +606,20 @@ def correlate_command(
     verdict_link(corr_verdict, context=[trigger_verdict_id])
     verdict_store.put(corr_verdict)
 
+    # Slack notification for correlation verdict
+    slack_url = os.environ.get("SLACK_WEBHOOK_URL", "")
+    if slack_url:
+        from nthlayer_common.slack import SlackNotifier
+        from nthlayer_correlate.notifications import build_correlation_blocks, find_slack_thread_ts
+
+        thread_ts = find_slack_thread_ts(verdict_store, [trigger_verdict_id])
+        blocks, text = build_correlation_blocks(corr_verdict)
+        notifier = SlackNotifier(slack_url)
+        new_ts = asyncio.run(notifier.send(blocks, text, thread_ts=thread_ts))
+        if new_ts and not thread_ts:
+            corr_verdict.metadata.custom["slack_thread_ts"] = new_ts
+            verdict_store.put(corr_verdict)
+
     print(f"Correlation verdict: {corr_verdict.id}")
     print(f"  Groups: {len(groups)}, Events: {len(events)}, Blast radius: {len(affected)} services")
 
