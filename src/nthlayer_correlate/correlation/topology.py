@@ -69,12 +69,10 @@ def group_topology(
 
             if a_severity > b_severity or (a_severity == b_severity and a_tier >= b_tier):
                 primary_service = group_a.service
-                primary_group = group_a
                 secondary_service = group_b.service
                 secondary_group = group_b
             else:
                 primary_service = group_b.service
-                primary_group = group_b
                 secondary_service = group_a.service
                 secondary_group = group_a
 
