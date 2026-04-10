@@ -151,6 +151,6 @@ class TestModelInterface:
         mock_store = MagicMock()
 
         with patch.object(model, "_call_model", new_callable=AsyncMock, return_value=model_response):
-            verdicts = await model.interpret("test", [_make_group()], verdict_store=mock_store)
+            await model.interpret("test", [_make_group()], verdict_store=mock_store)
 
         assert mock_store.put.call_count == 2  # 1 child + 1 parent

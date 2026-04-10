@@ -1,5 +1,20 @@
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+
+# Databases
+*.db
 
 # Dolt database files (added by bd init)
 .dolt/
-*.db
-*.db
+
+# Specification and planning documents (local development)
+*SPEC.md
+*PLAN.md
+*_SPEC.md
+*_PLAN.md

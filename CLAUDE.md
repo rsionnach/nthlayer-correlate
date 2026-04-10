@@ -10,7 +10,6 @@ Situational awareness through automated signal correlation. Continuously pre-cor
 ## Build Commands
 
 - **Install dependencies:** `uv sync --extra dev`
-- **Install nthlayer-learn (published):** `uv pip install "nthlayer-learn>=0.2.0"`
 - **Install nthlayer-learn (local path):** `pip install -e ../../nthlayer-learn/lib/python`
 - **Run tests:** `uv run pytest tests/ -v`
 - **Run tests (CI flags):** `uv run pytest tests/ -v --tb=short -x`
@@ -20,7 +19,7 @@ Situational awareness through automated signal correlation. Continuously pre-cor
 - **Run CLI:** `uv run nthlayer-correlate serve | status | replay | correlate`
 - **TDD workflow:** write failing test → implement → `uv run pytest` verify pass → commit
 - **Commit style:** `feat: <description> (Phase X.Y)`
-- **CI:** pushes/PRs to `main` or `develop`; matrix tests Python 3.11 and 3.12
+- **CI:** pushes/PRs to `main` or `develop`; matrix Python 3.11 and 3.12; uses `uv sync --extra dev --no-sources` — nthlayer-learn and nthlayer-common resolve from PyPI (not local paths) in CI
 <!-- END AUTO-MANAGED -->
 
 ---
@@ -85,12 +84,13 @@ src/nthlayer_correlate/
 │   └── dedup.py      # Dedup key: source|service|type|environment[|alert_name_or_metric]
 ├── snapshot/
 │   ├── generator.py  # Token budget, priority tiers P0-P3, SHA256 content hash caching
-│   ├── model.py      # ZFC judgment boundary — prompt assembly, response parsing, degraded mode
+│   ├── model.py      # ZFC judgment boundary — prompt assembly, response parsing (uses nthlayer_common.parsing), degraded mode; serves `serve`/`replay` subcommands
 │   └── token.py      # TokenEstimator Protocol; CharDivFourEstimator: len(text) // 4
 ├── state.py          # AgentState machine — deterministic transport-driven transitions
 ├── prometheus.py     # fetch_alerts, fetch_metric_breaches, verdict_to_event, load_dependency_graph, blast_radius_services
-├── reasoning.py      # Reasoning layer — LLM causal analysis between group assembly and verdict creation; provider-agnostic (Anthropic + OpenAI); degraded mode: confidence=0.0, tagged degraded=True
-└── cli.py            # serve | status | replay | correlate
+├── reasoning.py      # Reasoning layer — LLM causal analysis between group assembly and verdict creation; uses nthlayer_common.parsing for clamp/strip_markdown_fences; serves `correlate` subcommand
+├── notifications.py  # build_correlation_blocks(), find_slack_thread_ts() — Slack Block Kit builders
+└── cli.py            # serve | status | replay | correlate; _proximity_confidence() helper + _PROXIMITY_WINDOW_SECONDS=1800.0 constant
 ```
 
 Tier 1 uses SQLite FTS5 + WebhookIngester only. NATS/Kafka and PostgreSQL/ClickHouse are Tier 2+.
@@ -203,7 +203,22 @@ state:
 - `nthlayer-correlate serve [--config sitrep.yaml]` — start full pipeline (WebhookIngester + correlation loop); event queue maxsize=10000, drained single-threaded into SQLiteEventStore before each correlation cycle; VerdictStore opened with try/except fail-open (logs `verdict_store_not_available` if nthlayer-learn unavailable); handles SIGTERM/SIGINT
 - `nthlayer-correlate status [--config sitrep.yaml]` — show agent state, store stats (event_count, min/max timestamp, DB file size); `--store-dir` flag overrides DB path (used in tests)
 - `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a `tempfile.TemporaryDirectory` (auto-cleaned on exit); runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); sub-step order: dedup → severity enrichment → temporal grouping → topology grouping → change_candidates → `_assemble_groups` (uses `CorrelationEngine` helper for group assembly); `window_minutes = max(event_spread_minutes + 1, 5)`; `find_change_candidates` called with `window_minutes + 30`; topology loaded via `_build_topology_dict()` from YAML `topology.services[]`; prints group summary; optionally calls model for verdicts
-- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path> [--reasoning|--no-reasoning] [--model <provider/model>]` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; runs reasoning layer (model-based causal analysis if API key set, heuristic fallback otherwise); writes a `correlation` verdict (`producer.system="nthlayer-correlate"`) to the shared verdict store; `metadata.custom` includes `reasoning_mode: "model"|"heuristic"` and `reasoning: <result>|null`; returns exit 0 on success, 1 if trigger verdict not found. `--no-reasoning` disables model call entirely (heuristic only). `--model` accepts `"provider/model"` format (e.g. `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4-20250514"`)
+- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path> [--reasoning|--no-reasoning] [--model <provider/model>]` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; runs reasoning layer (model-based causal analysis if API key set, heuristic fallback otherwise); writes a `correlation` verdict (`producer.system="nthlayer-correlate"`) to the shared verdict store; `metadata.custom` includes `reasoning_mode: "model"|"heuristic"` and `reasoning: <result>|null`; after writing correlation verdict, sends Slack notification when `SLACK_WEBHOOK_URL` set — calls `find_slack_thread_ts(verdict_store, [trigger_verdict_id])` to thread under the breach message, stores returned `ts` in `corr_verdict.metadata.custom["slack_thread_ts"]`; returns exit 0 on success, 1 if trigger verdict not found. `--no-reasoning` disables model call entirely (heuristic only). `--model` accepts `"provider/model"` format (e.g. `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4-20250514"`). Heuristic fallback uses `_proximity_confidence(seconds)` — linear decay from 1.0 (simultaneous) to 0.0 at `_PROXIMITY_WINDOW_SECONDS=1800.0` (30 min); returns 0.5 for unknown proximity.
+
+### Slack Notifications (`notifications.py`)
+
+`src/nthlayer_correlate/notifications.py` — block builders and lineage walker for Slack threading.
+
+**`build_correlation_blocks(verdict) -> tuple[list[dict], str]`**
+- Extracts: `subject.ref` (service), `metadata.custom["root_causes"][0]["service"]`, `metadata.custom["blast_radius"]`, `judgment.confidence`
+- Block format: header "🔍 ROOT CAUSE IDENTIFIED · {service}", body with root cause service/blast radius count/up to 5 blast services, context footer with "nthlayer-correlate · confidence X.XX · {verdict.id}"
+- Returns `(blocks, fallback_text)`
+
+**`find_slack_thread_ts(verdict_store, verdict_ids: list[str]) -> str | None`**
+- Walks verdict lineage to find `slack_thread_ts` set by nthlayer-measure on the original breach verdict
+- For each verdict ID: checks `metadata.custom["slack_thread_ts"]`; if absent, walks `lineage.context` one hop up and checks those verdicts too
+- Returns first `slack_thread_ts` found, or `None` (graceful degradation — no thread = top-level message)
+- Exceptions on individual verdicts are swallowed — entire function never raises
 
 ### Scenario Fixtures (Phase 2.0 — built first)
 
@@ -277,7 +292,7 @@ Mocking: `fetch_alerts` and `fetch_metric_breaches` patched via `unittest.mock.p
 | `TestParseReasoningResponse` | Valid JSON parsed; markdown fences stripped; unknown group IDs filtered; confidence clamped to [0.0, 1.0]; malformed JSON raises `JSONDecodeError` |
 | `TestBuildUserPrompt` | DEPENDENCY GRAPH section present; group details (ID, services, change candidates) included; SLO TARGETS section present when provided; topology block included for multi-service groups |
 | `TestBuildSystemPrompt` | Contains "dependency", "temporal", "cascading", "JSON" |
-| `TestReasoningAvailable` | Returns `True` with either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; `False` without either |
+| `TestReasoningAvailable` | Returns `True` with `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `NTHLAYER_MODEL` set; `False` without any |
 | `TestReasonAboutCorrelations` | Successful call → `degraded=False`, correct confidence; empty groups → degraded; API error → degraded; malformed response → degraded; timeout → degraded |
 | `TestCorrelateCommandReasoning` | `--no-reasoning` → `reasoning_mode=heuristic`, `reasoning=None`; API key absent → heuristic fallback; API key present + model success → `reasoning_mode=model`, confidence from model, `overall_assessment` in `subject.summary` |
 
@@ -285,16 +300,18 @@ Mocking: `fetch_alerts` and `fetch_metric_breaches` patched via `unittest.mock.p
 
 Sits between `CorrelationEngine.correlate()` group assembly and verdict creation. Calls an LLM to assess causal relationships. Additive — `--no-reasoning` produces identical verdict structure to pre-reasoning behavior.
 
+**Serves:** `correlate` subcommand (live Prometheus-triggered). See also: `snapshot/model.py` which serves `serve` and `replay` subcommands.
+
 **Public API:**
-- `reasoning_available() -> bool` — returns `True` if `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set
-- `reason_about_correlations(groups, dependency_graph, slo_targets=None, model="claude-sonnet-4-20250514", max_tokens=4096, timeout=30) -> dict` — calls LLM via `nthlayer_common.llm.llm_call`; model accepts `"provider/model"` format; falls back to `_degraded_reasoning()` on any exception
+- `reasoning_available() -> bool` — returns `True` if `NTHLAYER_MODEL`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` is set (keyless providers like Ollama need only `NTHLAYER_MODEL`)
+- `reason_about_correlations(groups, dependency_graph, slo_targets=None, model=None, max_tokens=4096, timeout=30) -> dict` — calls LLM via `nthlayer_common.llm.llm_call`; `model=None` defers to `NTHLAYER_MODEL` env var; accepts `"provider/model"` format when supplied; falls back to `_degraded_reasoning()` on any exception
 
 **Result structure:**
 ```python
 {
     "groups": [{"group_id", "root_cause", "confidence", "reasoning", "recommended_actions", "is_causal", "degraded"}],
     "overall_assessment": str,
-    "overall_confidence": float,   # clamped to [0.0, 1.0]
+    "overall_confidence": float,   # clamped to [0.0, 1.0] via nthlayer_common.parsing.clamp
     "degraded": bool,
 }
 ```
@@ -303,7 +320,9 @@ Sits between `CorrelationEngine.correlate()` group assembly and verdict creation
 
 **Provider routing:** delegates to `nthlayer_common.llm.llm_call` via `asyncio.to_thread`. Model format `"provider/model"` — provider selection (anthropic, openai, ollama, etc.) handled by the shared wrapper in `nthlayer-common`.
 
-**Prompt structure:** System prompt — reliability engineer persona, JSON-only output format, causal reasoning rules (dependency direction, temporal proximity, cascading failure patterns). User prompt — DEPENDENCY GRAPH block, optional SLO TARGETS block, per-group detail (signals capped at 5 events each, change candidates, topology). `_compact_payload` truncates large dict values and long lists to stay within token budget.
+**Response parsing:** `_parse_reasoning_response` uses `nthlayer_common.parsing.strip_markdown_fences` to clean model output before `json.loads`, and `nthlayer_common.parsing.clamp` to normalise confidence values.
+
+**Prompt structure:** System prompt — reliability engineer persona, JSON-only output format, causal reasoning rules (dependency direction, temporal proximity, cascading failure patterns). User prompt — DEPENDENCY GRAPH block, optional SLO TARGETS block, per-group detail (signals capped at 5 events each, change candidates, topology). `_compact_payload` truncates large dict values and long lists to stay within token budget. `_build_user_prompt` caps groups at MAX_GROUPS=10 (sorted by priority, P3 dropped first) and prunes the dependency graph to services present in the selected groups + 1 hop of deps and dependents before building the DEPENDENCY GRAPH section — reduces prompt token cost for large topologies.
 
 ### Prometheus Module (`prometheus.py`)
 
@@ -341,6 +360,28 @@ Identifying candidate causes is transport (index lookup + arithmetic on pre-comp
 `get_recent_changes(service, window_minutes, reference_time=None)` accepts an optional `reference_time` (ISO 8601). When set, the lookback window is anchored to that timestamp instead of wall-clock now — required for replay with historical scenario data. `find_change_candidates` passes `group.time_window[0]` as `reference_time` so replay finds the correct change candidates.
 
 Change event schema includes AI-specific change types: model version swaps, prompt changes, LoRA adapter deployments, context window configuration changes — alongside traditional change types (deploys, config, feature flags, schema migrations).
+<!-- END AUTO-MANAGED -->
+
+<!-- AUTO-MANAGED: prompts -->
+## Prompt Definitions (`prompts/`)
+
+YAML-based prompt definitions — migration from hardcoded Python strings to versioned YAML files complete. Both `reasoning.py` and `snapshot/model.py` load prompts from YAML via `nthlayer_common.prompts.load_prompt`.
+
+**YAML structure:** each file has `name`, `version`, `system` (with `{schema_block}` placeholder injected at load time by `load_prompt`), `response_schema` (JSON Schema for the expected response), and `user_template` (with `{{ variable }}` placeholders interpolated at call time).
+
+**Wiring:** `_build_system_prompt()` in both modules follows this pattern:
+```python
+_PROMPT_PATH = Path(__file__).parent... / "prompts" / "reasoning.yaml"
+
+def _build_system_prompt() -> str:
+    spec = load_prompt(_PROMPT_PATH)
+    return spec.system
+```
+
+| File | Serves | Key schema fields |
+|------|--------|-------------------|
+| `prompts/reasoning.yaml` | `correlate` subcommand (`reasoning.py`) | `groups[].{group_id, root_cause, confidence, reasoning, recommended_actions, is_causal}`, `overall_assessment`, `overall_confidence` |
+| `prompts/snapshot.yaml` | `serve`/`replay` subcommands (`snapshot/model.py`) | `assessments[].{group_id, service, summary, action, confidence, reasoning, tags}`; action enum: `flag\|defer\|escalate` |
 <!-- END AUTO-MANAGED -->
 
 ---

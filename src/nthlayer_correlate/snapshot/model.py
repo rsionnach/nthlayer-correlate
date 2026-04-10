@@ -10,10 +10,9 @@ import structlog
 from pathlib import Path
 
 from nthlayer_common.prompts import load_prompt
+from nthlayer_correlate.types import CorrelationGroup
 
 _PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "snapshot.yaml"
-
-from nthlayer_correlate.types import CorrelationGroup
 
 logger = structlog.get_logger()
 
