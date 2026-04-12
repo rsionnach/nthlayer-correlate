@@ -42,6 +42,7 @@ async def reason_about_correlations(
     groups: list[CorrelationGroup],
     dependency_graph: dict,
     slo_targets: dict | None = None,
+    trace_evidence: object | None = None,
     model: str | None = None,
     max_tokens: int = 4096,
     timeout: int = 30,
@@ -59,7 +60,7 @@ async def reason_about_correlations(
         return _degraded_reasoning(groups, reason="no correlation groups to assess")
 
     system_prompt = _build_system_prompt()
-    user_prompt = _build_user_prompt(groups, dependency_graph, slo_targets)
+    user_prompt = _build_user_prompt(groups, dependency_graph, slo_targets, trace_evidence=trace_evidence)
 
     try:
         response_text = await _call_model(
@@ -135,6 +136,8 @@ def _build_user_prompt(
     groups: list[CorrelationGroup],
     dependency_graph: dict,
     slo_targets: dict | None,
+    *,
+    trace_evidence: object | None = None,
 ) -> str:
     sections = []
 
@@ -220,6 +223,98 @@ def _build_user_prompt(
             )
 
         sections.append("\n".join(lines))
+
+    # Trace evidence section (optional)
+    trace_section = _build_trace_evidence_section(trace_evidence)
+    if trace_section:
+        sections.append(trace_section)
+
+    return "\n\n".join(sections)
+
+
+def _build_trace_evidence_section(trace_evidence: object | None) -> str:
+    """Format trace evidence for the reasoning prompt.
+
+    NOTE: v0 renders trace evidence as flat text for the reasoning prompt.
+    Future: support multi-register summaries (span-level detail for
+    investigation agent, high-level for communication agent) via the
+    Summaries(technical, plain, executive) pattern from decision records.
+    """
+    if trace_evidence is None:
+        return ""
+
+    from nthlayer_correlate.traces.protocol import TraceEvidence
+    if not isinstance(trace_evidence, TraceEvidence):
+        return ""
+    if not trace_evidence.services:
+        return ""
+
+    sections = ["TRACE EVIDENCE:"]
+
+    for svc in trace_evidence.services:
+        lines = [f"  {svc.service}:"]
+
+        # Latency summary
+        if svc.latency_change_pct is not None and abs(svc.latency_change_pct) > 10:
+            lines.append(
+                f"    Latency: p50={svc.p50_latency_ms:.0f}ms, "
+                f"p99={svc.p99_latency_ms:.0f}ms "
+                f"({svc.latency_change_pct:+.0f}% vs baseline)"
+            )
+        else:
+            lines.append(
+                f"    Latency: p50={svc.p50_latency_ms:.0f}ms, "
+                f"p99={svc.p99_latency_ms:.0f}ms (within baseline)"
+            )
+
+        # Error summary
+        if svc.error_rate > 0.01:
+            lines.append(
+                f"    Errors: {svc.error_rate:.1%} error rate "
+                f"({svc.error_count}/{svc.total_request_count} requests)"
+            )
+            for err in svc.top_errors[:3]:
+                lines.append(f"      - \"{err.error_message}\" (x{err.count})")
+
+        # Slow operations
+        for op in svc.slow_operations[:3]:
+            if op.change_pct is not None and op.change_pct > 20:
+                lines.append(
+                    f"    Slow operation: {op.operation} "
+                    f"p99={op.p99_ms:.0f}ms ({op.change_pct:+.0f}% vs baseline)"
+                )
+
+        # Call edges
+        if svc.callers:
+            caller_str = ", ".join(
+                f"{c.source_service} ({c.request_count} reqs, p99={c.p99_latency_ms:.0f}ms)"
+                for c in svc.callers[:3]
+            )
+            lines.append(f"    Called by: {caller_str}")
+
+        if svc.callees:
+            callee_str = ", ".join(
+                f"{c.target_service} ({c.request_count} reqs, p99={c.p99_latency_ms:.0f}ms, "
+                f"err={c.error_count}/{c.request_count})"
+                for c in svc.callees[:3]
+            )
+            lines.append(f"    Calls: {callee_str}")
+
+        sections.append("\n".join(lines))
+
+    # Topology divergence
+    if trace_evidence.topology_divergence:
+        div = trace_evidence.topology_divergence
+        if div.observed_not_declared:
+            sections.append(
+                "  Undeclared Dependencies (observed in traces, not in specs):\n"
+                + "\n".join(f"    - {a} → {b}" for a, b in div.observed_not_declared)
+            )
+        if div.declared_not_observed:
+            sections.append(
+                "  Declared but Unobserved Dependencies (in specs, no traces):\n"
+                + "\n".join(f"    - {a} → {b}" for a, b in div.declared_not_observed)
+            )
 
     return "\n\n".join(sections)
 

@@ -511,3 +511,121 @@ class TestCorrelateCommandReasoning:
         assert custom["reasoning"] is not None
         assert cv.judgment.confidence == 0.87
         assert "Causal link" in cv.subject.summary
+
+
+# ---------------------------------------------------------------------------
+# Task 6b: Trace evidence section in reasoning prompt
+# ---------------------------------------------------------------------------
+
+from datetime import datetime as dt, timezone
+from nthlayer_correlate.traces.protocol import (
+    ErrorSummary,
+    OperationLatency,
+    ServiceCallEdge,
+    ServiceTraceProfile,
+    TopologyDivergence,
+    TraceEvidence,
+)
+from nthlayer_correlate.reasoning import _build_trace_evidence_section
+
+
+def _make_trace_evidence_for_reasoning() -> TraceEvidence:
+    now = dt.now(tz=timezone.utc)
+    return TraceEvidence(
+        services=[ServiceTraceProfile(
+            service="fraud-detect",
+            time_window_start=now, time_window_end=now,
+            callers=[ServiceCallEdge(
+                source_service="payment-api", target_service="fraud-detect",
+                request_count=1204, error_count=0, p50_latency_ms=12.5, p99_latency_ms=85.0,
+            )],
+            callees=[ServiceCallEdge(
+                source_service="fraud-detect", target_service="model-store",
+                request_count=1204, error_count=0, p50_latency_ms=10.0, p99_latency_ms=45.0,
+            )],
+            p50_latency_ms=50.0, p95_latency_ms=120.0, p99_latency_ms=340.0,
+            baseline_p50_ms=18.0, latency_change_pct=178.0,
+            error_rate=0.02, error_count=24, total_request_count=1204,
+            top_errors=[ErrorSummary(
+                error_message="timeout waiting for model",
+                count=24, first_seen=now, last_seen=now, sample_trace_id="abc",
+            )],
+            slow_operations=[OperationLatency(
+                operation="POST /predict", p50_ms=150.0, p99_ms=312.0,
+                request_count=1204, error_rate=0.02,
+                baseline_p50_ms=50.0, change_pct=200.0,
+            )],
+            sample_error_traces=[], sample_slow_traces=[],
+        )],
+        topology_divergence=None,
+        query_time_ms=6240.0,
+        backend="tempo",
+    )
+
+
+class TestBuildTraceEvidenceSection:
+    def test_with_data(self):
+        evidence = _make_trace_evidence_for_reasoning()
+        section = _build_trace_evidence_section(evidence)
+        assert "fraud-detect" in section
+        assert "340" in section  # p99
+        assert "vs baseline" in section or "baseline" in section
+        assert "2.0%" in section or "error" in section.lower()
+        assert "POST /predict" in section
+        assert "payment-api" in section  # caller
+        assert "model-store" in section  # callee
+
+    def test_none_returns_empty(self):
+        assert _build_trace_evidence_section(None) == ""
+
+    def test_empty_services_returns_empty(self):
+        evidence = TraceEvidence(
+            services=[], topology_divergence=None,
+            query_time_ms=0, backend="tempo",
+        )
+        assert _build_trace_evidence_section(evidence) == ""
+
+    def test_topology_divergence_included(self):
+        evidence = _make_trace_evidence_for_reasoning()
+        evidence.topology_divergence = TopologyDivergence(
+            declared_not_observed=[],
+            observed_not_declared=[("fraud-detect", "unknown-svc")],
+        )
+        section = _build_trace_evidence_section(evidence)
+        assert "Undeclared" in section or "undeclared" in section.lower()
+        assert "unknown-svc" in section
+
+    def test_within_baseline_latency(self):
+        now = dt.now(tz=timezone.utc)
+        evidence = TraceEvidence(
+            services=[ServiceTraceProfile(
+                service="stable-svc",
+                time_window_start=now, time_window_end=now,
+                callers=[], callees=[],
+                p50_latency_ms=10.0, p95_latency_ms=20.0, p99_latency_ms=30.0,
+                baseline_p50_ms=9.5, latency_change_pct=5.0,  # <10%
+                error_rate=0.0, error_count=0, total_request_count=500,
+                top_errors=[], slow_operations=[],
+                sample_error_traces=[], sample_slow_traces=[],
+            )],
+            topology_divergence=None,
+            query_time_ms=100.0,
+            backend="tempo",
+        )
+        section = _build_trace_evidence_section(evidence)
+        assert "within baseline" in section
+
+
+class TestBuildUserPromptWithTraceEvidence:
+    def test_includes_trace_section(self):
+        evidence = _make_trace_evidence_for_reasoning()
+        group = _make_group()
+        prompt = _build_user_prompt([group], {}, None, trace_evidence=evidence)
+        assert "Trace Evidence" in prompt or "TRACE EVIDENCE" in prompt
+
+    def test_without_trace_unchanged(self):
+        group = _make_group()
+        prompt_without = _build_user_prompt([group], {}, None)
+        prompt_with_none = _build_user_prompt([group], {}, None, trace_evidence=None)
+        assert prompt_without == prompt_with_none
+        assert "Trace Evidence" not in prompt_without

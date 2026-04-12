@@ -90,7 +90,27 @@ src/nthlayer_correlate/
 ├── prometheus.py     # fetch_alerts, fetch_metric_breaches, verdict_to_event, load_dependency_graph, blast_radius_services
 ├── reasoning.py      # Reasoning layer — LLM causal analysis between group assembly and verdict creation; uses nthlayer_common.parsing for clamp/strip_markdown_fences; serves `correlate` subcommand
 ├── notifications.py  # build_correlation_blocks(), find_slack_thread_ts() — Slack Block Kit builders
-└── cli.py            # serve | status | replay | correlate; _proximity_confidence() helper + _PROXIMITY_WINDOW_SECONDS=1800.0 constant
+├── traces/
+│   ├── __init__.py   # Trace backend adapters package
+│   ├── protocol.py   # TraceBackend Protocol + dataclasses: TraceSpanSummary, ServiceCallEdge, ErrorSummary,
+│   │                 # OperationLatency, TopologyDivergence, ServiceTraceProfile, TraceEvidence
+│   ├── tempo.py      # TempoTraceBackend — Grafana Tempo adapter; TraceQL metrics API + search;
+│   │                 # optional Prometheus service graphs; 5-phase get_trace_evidence: stats → edges → operations → errors → samples;
+│   │                 # internal _ServiceStats(p50_ms, p95_ms, p99_ms, total_count, error_count, error_rate);
+│   │                 # internal _EdgeAccumulator(count, durations: list[float], errors) — accumulates client span edges;
+│   │                 # helpers: _extract_metric_by_service (averages samples, promLabels fallback),
+│   │                 # _extract_metric_by_service_and_op, _parse_service_graph_results (seconds→ms),
+│   │                 # _span_to_summary, _traceql_service_filter (static, || for multi-service),
+│   │                 # _parse_tempo_timestamp (nanoseconds→datetime UTC); latency ns÷1_000_000→ms;
+│   │                 # _query_operation_breakdown: 5 parallel TraceQL calls faceted by (service, operation),
+│   │                 #   sorted by p99_ms descending, capped at 10 per service, baseline comparison via change_pct;
+│   │                 # _query_edges_from_traces: slow path, client spans (span.peer.service as target),
+│   │                 #   skips self-calls and spans missing span.peer.service, limit=1000;
+│   │                 # aclose() releases httpx client connections
+│   └── topology.py   # detect_topology_divergence(trace_evidence, declared_deps) → TopologyDivergence;
+│                     # blast-radius-scoped: edges to/from services outside blast radius are ignored
+└── cli.py            # serve | status | replay | correlate; _build_parser() public (for testability);
+                      # _proximity_confidence() helper + _PROXIMITY_WINDOW_SECONDS=1800.0 constant
 ```
 
 Tier 1 uses SQLite FTS5 + WebhookIngester only. NATS/Kafka and PostgreSQL/ClickHouse are Tier 2+.
@@ -196,6 +216,15 @@ state:
   alert_interval_seconds: 60
   incident_interval_seconds: 30
   degraded_interval_seconds: 120
+traces:
+  backend: null          # "tempo" | null (disabled)
+  detail: full           # "full" | "summary"
+  baseline_window: 1h    # baseline comparison window
+  tempo:
+    endpoint: "http://localhost:3200"
+    org_id: ""           # X-Scope-OrgID for multi-tenant Tempo
+    timeout_seconds: 30
+    use_service_graphs: true  # false = derive edges from raw traces
 ```
 
 ### CLI Commands
@@ -203,7 +232,7 @@ state:
 - `nthlayer-correlate serve [--config sitrep.yaml]` — start full pipeline (WebhookIngester + correlation loop); event queue maxsize=10000, drained single-threaded into SQLiteEventStore before each correlation cycle; VerdictStore opened with try/except fail-open (logs `verdict_store_not_available` if nthlayer-learn unavailable); handles SIGTERM/SIGINT
 - `nthlayer-correlate status [--config sitrep.yaml]` — show agent state, store stats (event_count, min/max timestamp, DB file size); `--store-dir` flag overrides DB path (used in tests)
 - `nthlayer-correlate replay --scenario <path> [--config sitrep.yaml] [--no-model]` — feed scenario YAML into a `tempfile.TemporaryDirectory` (auto-cleaned on exit); runs correlation sub-steps manually (bypasses `engine.correlate()` to handle historical scenario timestamps); sub-step order: dedup → severity enrichment → temporal grouping → topology grouping → change_candidates → `_assemble_groups` (uses `CorrelationEngine` helper for group assembly); `window_minutes = max(event_spread_minutes + 1, 5)`; `find_change_candidates` called with `window_minutes + 30`; topology loaded via `_build_topology_dict()` from YAML `topology.services[]`; prints group summary; optionally calls model for verdicts
-- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path> [--reasoning|--no-reasoning] [--model <provider/model>]` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; runs reasoning layer (model-based causal analysis if API key set, heuristic fallback otherwise); writes a `correlation` verdict (`producer.system="nthlayer-correlate"`) to the shared verdict store; `metadata.custom` includes `reasoning_mode: "model"|"heuristic"` and `reasoning: <result>|null`; after writing correlation verdict, sends Slack notification when `SLACK_WEBHOOK_URL` set — calls `find_slack_thread_ts(verdict_store, [trigger_verdict_id])` to thread under the breach message, stores returned `ts` in `corr_verdict.metadata.custom["slack_thread_ts"]`; returns exit 0 on success, 1 if trigger verdict not found. `--no-reasoning` disables model call entirely (heuristic only). `--model` accepts `"provider/model"` format (e.g. `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4-20250514"`). Heuristic fallback uses `_proximity_confidence(seconds)` — linear decay from 1.0 (simultaneous) to 0.0 at `_PROXIMITY_WINDOW_SECONDS=1800.0` (30 min); returns 0.5 for unknown proximity.
+- `nthlayer-correlate correlate --trigger-verdict <id> --prometheus-url <url> --specs-dir <dir> --verdict-store <path> [--reasoning|--no-reasoning] [--model <provider/model>] [--decision-store <path>] [--trace-backend tempo] [--tempo-endpoint <url>] [--trace-detail full|summary]` — live correlation triggered by a verdict from nthlayer-measure; fetches Prometheus alerts + metric breaches for blast-radius services; runs reasoning layer (model-based causal analysis if API key set, heuristic fallback otherwise); writes a `correlation` verdict (`producer.system="nthlayer-correlate"`) to the shared verdict store; `metadata.custom` includes `reasoning_mode: "model"|"heuristic"`, `reasoning: <result>|null`, `evidence_sources: {prometheus, verdict_store, trace_backend: "<backend>"|null}`, and `trace_query_time_ms: <float>|null`; after writing correlation verdict, sends Slack notification when `SLACK_WEBHOOK_URL` set — calls `find_slack_thread_ts(verdict_store, [trigger_verdict_id])` to thread under the breach message, stores returned `ts` in `corr_verdict.metadata.custom["slack_thread_ts"]`; returns exit 0 on success, 1 if trigger verdict not found. `--no-reasoning` disables model call entirely (heuristic only). `--model` accepts `"provider/model"` format (e.g. `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4-20250514"`). Heuristic fallback uses `_proximity_confidence(seconds)` — linear decay from 1.0 (simultaneous) to 0.0 at `_PROXIMITY_WINDOW_SECONDS=1800.0` (30 min); returns 0.5 for unknown proximity. `--trace-backend`: optional; `"tempo"` activates `TempoTraceBackend`; `--tempo-endpoint` overrides `SitRepConfig.tempo_endpoint`; `--trace-detail` defaults to `"full"`. `--decision-store <path>`: optional; when set, writes a content-addressed Verdict record via `nthlayer_common.records.verdict_bridge.build_decision_verdict` (agent="correlate"; action includes `root_causes[:3]`, `blast_radius_count`, `trace_backend: "<backend>"|null`, `trace_services_count: int`; summaries: technical="Correlation: {service}, {N} groups, {M} blast radius[, trace evidence from {backend}]", plain=verdict_summary[:280], executive="{service} correlation — {mode}[ + traces]"); fail-open (logs `decision_verdict_write_failed` on error). `correlate_command()` also accepts `trace_backend: object | None = None` (injectable TraceBackend Protocol instance, used in tests and programmatic callers) and `trace_baseline_window: str = "1h"` (parsed via `_parse_duration()`); trace errors degrade gracefully (logs `trace_evidence_unavailable`); calls `trace_backend.aclose()` after gather if present; topology divergence computed via `detect_topology_divergence` when trace evidence present. Parser exposed as `_build_parser()` for test access.
 
 ### Slack Notifications (`notifications.py`)
 
@@ -281,8 +310,72 @@ Covers the live `correlate` subcommand and `prometheus.py` module:
 | `test_verdict_to_event` | Produces `EventType.VERDICT`; `payload["verdict_id"]` and `payload["breach"]` set correctly |
 | `test_correlate_command_writes_correlation_verdict` | Full integration with mocked Prometheus; correlation verdict written with `lineage.context` containing trigger ID; `subject.ref=service`, `producer.system="nthlayer-correlate"` |
 | `test_correlate_command_missing_verdict` | Returns exit code 1 when trigger verdict not found |
+| `test_correlate_with_trace_backend` | `evidence_sources["trace_backend"] == "tempo"` and `trace_query_time_ms == approx(6240.0)` |
+| `test_correlate_without_trace_backend` | `evidence_sources["trace_backend"] is None` when no backend configured |
+| `test_trace_backend_connect_error_degrades` | `ConnectError` → result==0, `evidence_sources["trace_backend"] is None` |
+| `test_trace_backend_timeout_degrades` | `asyncio.TimeoutError` → result==0, `evidence_sources["trace_backend"] is None` |
+| `test_decision_record_includes_trace_context` | Decision record action dict includes `trace_backend` and `trace_services_count`; technical summary contains "trace evidence from tempo" |
+
+Helpers: `_make_trace_evidence()` builds minimal `TraceEvidence` with one `ServiceTraceProfile` (fraud-detect, `latency_change_pct=178.0`, `error_rate=0.02`); `_setup_trigger_and_mocks()` creates trigger verdict + mock alert/breach coroutines.
 
 Mocking: `fetch_alerts` and `fetch_metric_breaches` patched via `unittest.mock.patch` on `nthlayer_correlate.prometheus`.
+
+### CLI and Config Test Coverage (`tests/test_cli.py`)
+
+In addition to `TestParseRelativeTime`, `TestReplayCommand`, and `TestStatusCommand`:
+
+| Test class | Key assertions |
+|------------|----------------|
+| `TestConfigTraces` | `traces.backend/detail/baseline_window` parsed; `traces.tempo.endpoint/org_id/timeout_seconds/use_service_graphs` parsed; defaults correct when `traces:` section absent |
+| `TestCLITraceFlags` | `_build_parser()` accepts `--trace-backend`, `--tempo-endpoint`, `--trace-detail`; all three flags are optional (absent → `trace_backend=None`, `tempo_endpoint=None`, `trace_detail="full"`) |
+
+### Trace Protocol Test Coverage (`tests/test_trace_protocol.py`)
+
+Covers all dataclasses in `traces/protocol.py`:
+
+| Test class | Key assertions |
+|------------|----------------|
+| `TestTraceSpanSummary` | All fields set; optional `error_message` and `parent_service` accept `None` |
+| `TestServiceCallEdge` | `source_service`, `target_service`, `request_count`, `error_count` set correctly |
+| `TestErrorSummary` | `count`, `first_seen/last_seen`, `sample_trace_id=None` |
+| `TestOperationLatency` | `baseline_p50_ms` and `change_pct` accept `None`; populated correctly when set |
+| `TestTopologyDivergence` | Empty lists accepted |
+| `TestServiceTraceProfile` | All latency percentiles, baseline, change_pct, error fields set correctly |
+
+### Trace Tempo Test Coverage (`tests/test_trace_tempo.py`)
+
+Covers `TempoTraceBackend`:
+
+| Test class | Key assertions |
+|------------|----------------|
+| `TestConstructor` | Defaults: endpoint `http://localhost:3200`, `org_id=""`, `use_service_graphs=True`, `prometheus_url=None`; explicit params override; `org_id` sets `X-Scope-OrgID` header; no header when `org_id` empty; `TEMPO_ENDPOINT` env var respected |
+| `TestHealthCheck` | Returns `True` on 200; `False` on non-200; `False` on connection error |
+| `TestTraceQLMetricsQuery` | GET to `/api/metrics/query_range`; `q` and `step` params sent correctly |
+| `TestTraceQLSearch` | GET to `/api/search`; `limit` param sent as string |
+| `TestPrometheusQuery` | GET to `/api/v1/query`; empty dict returned when `prometheus_url=None` |
+| `TestExtractMetricByService` | Single series averages all samples to per-service float; multiple series; empty response; `promLabels` fallback when `labels` missing service key |
+| `TestExtractMetricByServiceAndOp` | Faceted response keyed by `(service, operation)` tuple |
+| `TestParseServiceGraphResults` | Parses count/error/p99/p50 from Prometheus result format; converts seconds→ms (×1000) |
+| `TestSpanToSummary` | Error span: `status="error"`, `error_message` from `span.status_message`; ok span: `status="ok"`, `error_message=None` |
+| `TestServiceFilter` | Single service → equality expression; multiple services → `||`-joined expressions |
+| `TestParseTempoTimestamp` | Nanoseconds integer → `datetime` with `tzinfo=timezone.utc` |
+| `TestQueryServiceStats` | 5 parallel TraceQL calls (p50/p95/p99/count/error); converts ns→ms; skips services with zero total_count |
+| `TestQueryOperationBreakdown` | 12 ops → capped at 10, sorted by p99_ms descending; baseline comparison: 5th call is baseline p50, `change_pct == approx(200.0)` for 50ms baseline vs 150ms incident |
+| `TestQueryEdgesFromTraces` | 2 client spans A→B → 1 edge (count=2, errors=1); self-calls (A→A) produce no edges; spans missing `span.peer.service` skipped |
+| `TestQueryServiceGraphsFromPrometheus` | 4 parallel Prometheus queries fired; edges parsed correctly from count/error/p99/p50 results |
+
+### Trace Topology Test Coverage (`tests/test_trace_topology.py`)
+
+Covers `detect_topology_divergence`:
+
+| Test | Key assertion |
+|------|---------------|
+| `test_no_divergence` | Declared A→B matches observed A→B: both lists empty |
+| `test_declared_not_observed` | Declared A→B but no trace edge: `("A","B")` in `declared_not_observed` |
+| `test_observed_not_declared` | Traces show A→C but not in specs: `("A","C")` in `observed_not_declared` |
+| `test_mixed_divergence` | Match (A→B) not in either list; observed-only (A→D) in `observed_not_declared`; declared edge to C (not in blast radius profiles) NOT flagged as `declared_not_observed` |
+| `test_only_blast_radius_compared` | Declared edge to service outside blast radius is ignored (no false `declared_not_observed`) |
+| `test_empty_trace_evidence` | No profiles → both lists empty |
 
 ### Reasoning Layer Test Coverage (`tests/test_reasoning.py`)
 
@@ -304,7 +397,7 @@ Sits between `CorrelationEngine.correlate()` group assembly and verdict creation
 
 **Public API:**
 - `reasoning_available() -> bool` — returns `True` if `NTHLAYER_MODEL`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` is set (keyless providers like Ollama need only `NTHLAYER_MODEL`)
-- `reason_about_correlations(groups, dependency_graph, slo_targets=None, model=None, max_tokens=4096, timeout=30) -> dict` — calls LLM via `nthlayer_common.llm.llm_call`; `model=None` defers to `NTHLAYER_MODEL` env var; accepts `"provider/model"` format when supplied; falls back to `_degraded_reasoning()` on any exception
+- `reason_about_correlations(groups, dependency_graph, slo_targets=None, trace_evidence=None, model=None, max_tokens=4096, timeout=30) -> dict` — calls LLM via `nthlayer_common.llm.llm_call`; `trace_evidence` is an optional `TraceEvidence` object passed through to `_build_user_prompt`; `model=None` defers to `NTHLAYER_MODEL` env var; accepts `"provider/model"` format when supplied; falls back to `_degraded_reasoning()` on any exception
 
 **Result structure:**
 ```python

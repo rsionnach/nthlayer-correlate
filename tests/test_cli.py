@@ -73,3 +73,85 @@ class TestStatusCommand:
     def test_status_default(self, tmp_path):
         result = status_command(config_path=None, store_dir=str(tmp_path))
         assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 7: Config + CLI flags for trace backend
+# ---------------------------------------------------------------------------
+
+from nthlayer_correlate.config import load_config
+
+
+class TestConfigTraces:
+    def test_traces_section_parsed(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("""\
+traces:
+  backend: tempo
+  detail: summary
+  baseline_window: 2h
+  tempo:
+    endpoint: "http://tempo:3200"
+    org_id: "my-tenant"
+    timeout_seconds: 60
+    use_service_graphs: false
+""")
+        cfg = load_config(str(config_file))
+        assert cfg.trace_backend == "tempo"
+        assert cfg.trace_detail == "summary"
+        assert cfg.trace_baseline_window == "2h"
+        assert cfg.tempo_endpoint == "http://tempo:3200"
+        assert cfg.tempo_org_id == "my-tenant"
+        assert cfg.tempo_timeout == 60
+        assert cfg.tempo_use_service_graphs is False
+
+    def test_defaults_without_traces_section(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("store:\n  path: events.db\n")
+        cfg = load_config(str(config_file))
+        assert cfg.trace_backend is None
+        assert cfg.trace_detail == "full"
+        assert cfg.tempo_endpoint == "http://localhost:3200"
+        assert cfg.tempo_use_service_graphs is True
+
+    def test_tempo_subsection(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("""\
+traces:
+  tempo:
+    endpoint: "http://custom:3200"
+""")
+        cfg = load_config(str(config_file))
+        assert cfg.tempo_endpoint == "http://custom:3200"
+
+
+class TestCLITraceFlags:
+    def test_correlate_parser_accepts_trace_flags(self):
+        from nthlayer_correlate.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "correlate",
+            "--trigger-verdict", "vrd-test",
+            "--prometheus-url", "http://prom:9090",
+            "--specs-dir", "/specs",
+            "--trace-backend", "tempo",
+            "--tempo-endpoint", "http://tempo:3200",
+            "--trace-detail", "summary",
+        ])
+        assert args.trace_backend == "tempo"
+        assert args.tempo_endpoint == "http://tempo:3200"
+        assert args.trace_detail == "summary"
+
+    def test_correlate_parser_trace_flags_optional(self):
+        from nthlayer_correlate.cli import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "correlate",
+            "--trigger-verdict", "vrd-test",
+            "--prometheus-url", "http://prom:9090",
+            "--specs-dir", "/specs",
+        ])
+        assert args.trace_backend is None
+        assert args.tempo_endpoint is None
+        assert args.trace_detail == "full"
