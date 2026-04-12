@@ -13,8 +13,16 @@ dist/
 # Dolt database files (added by bd init)
 .dolt/
 
-# Specification and planning documents (local development)
-*SPEC.md
+# Specification and planning documents (internal, not for public repos)
+*SPEC*.md
+*-SPEC.md
 *PLAN.md
 *_SPEC.md
 *_PLAN.md
+SRE-EXPERIENCE.md
+RESPOND-COMMS*.md
+COSTOPTIMISATION.md
+
+# Beads task tracking (centralized in opensrm Dolt DB)
+.beads/
+.beads.archived/

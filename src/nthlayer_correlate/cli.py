@@ -35,6 +35,16 @@ REFERENCE_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
 # Confidence decay window for temporal proximity heuristic (30 minutes)
 _PROXIMITY_WINDOW_SECONDS = 1800.0
 
+_DURATION_UNITS = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def _parse_duration(value: str) -> timedelta:
+    """Parse a duration string (e.g. '1h', '30m', '2h') to timedelta."""
+    for suffix, multiplier in sorted(_DURATION_UNITS.items(), key=lambda x: -len(x[0])):
+        if value.endswith(suffix):
+            return timedelta(seconds=float(value[:-len(suffix)]) * multiplier)
+    return timedelta(hours=1)  # default fallback
+
 
 def _proximity_confidence(seconds: float | None) -> float:
     """Heuristic confidence from temporal proximity of a change to a signal.
@@ -42,7 +52,7 @@ def _proximity_confidence(seconds: float | None) -> float:
     Decays linearly from 1.0 (simultaneous) to 0.0 (30 minutes apart).
     Returns 0.5 for unknown proximity.
     """
-    if not seconds:
+    if seconds is None:
         return 0.5
     from nthlayer_common.parsing import clamp
     return clamp(1.0 - seconds / _PROXIMITY_WINDOW_SECONDS)
@@ -386,6 +396,9 @@ def correlate_command(
     respond_args: str | None = None,
     reasoning: bool = True,
     reasoning_model: str | None = None,
+    decision_store_path: str | None = None,
+    trace_backend: object | None = None,  # TraceBackend Protocol (not runtime_checkable)
+    trace_baseline_window: str = "1h",
 ) -> int:
     """Correlate signals from a trigger evaluation verdict.
 
@@ -435,11 +448,12 @@ def correlate_command(
     affected = blast_radius_services(trigger_service, dep_graph)
     log.info("Blast radius computed", affected_services=sorted(affected))
 
-    # Gather events from Prometheus and verdict store
+    # Gather events from Prometheus and verdict store (+ optional trace evidence)
     async def _gather():
         import httpx
 
         events: list[SitRepEvent] = []
+        trace_evidence = None
 
         async with httpx.AsyncClient() as client:
             # 1. Prometheus alerts on affected services
@@ -461,10 +475,35 @@ def correlate_command(
             if svc in affected:
                 events.append(verdict_to_event(v))
 
-        return events
+        # 4. Trace evidence (optional, graceful degradation)
+        if trace_backend is not None:
+            try:
+                baseline_td = _parse_duration(trace_baseline_window)
+                end = datetime.now(tz=timezone.utc)
+                start = end - timedelta(minutes=30)
+                trace_evidence = await trace_backend.get_trace_evidence(
+                    services=sorted(affected),
+                    start=start,
+                    end=end,
+                    baseline_window=baseline_td,
+                )
+            except Exception as exc:
+                log.warning("trace_evidence_unavailable", error=str(exc))
 
-    events = asyncio.run(_gather())
+        return events, trace_evidence
+
+    events, trace_evidence = asyncio.run(_gather())
+
+    # Close trace backend client to release connections
+    if trace_backend is not None and hasattr(trace_backend, "aclose"):
+        asyncio.run(trace_backend.aclose())
+
     log.info("Gathered events", count=len(events))
+
+    # Compute topology divergence (declared vs observed) for reasoning enrichment
+    if trace_evidence and dep_graph:
+        from nthlayer_correlate.traces.topology import detect_topology_divergence
+        trace_evidence.topology_divergence = detect_topology_divergence(trace_evidence, dep_graph)
 
     if not events:
         log.info("No correlated events found, no correlation verdict needed")
@@ -505,6 +544,8 @@ def correlate_command(
             kwargs = {}
             if reasoning_model:
                 kwargs["model"] = reasoning_model
+            if trace_evidence:
+                kwargs["trace_evidence"] = trace_evidence
             reasoning_result = asyncio.run(
                 reason_about_correlations(groups, dep_graph, **kwargs)
             )
@@ -601,10 +642,48 @@ def correlate_command(
             "events_gathered": len(events),
             "reasoning_mode": reasoning_mode,
             "reasoning": reasoning_result if reasoning_mode == "model" else None,
+            "evidence_sources": {
+                "prometheus": True,
+                "verdict_store": True,
+                "trace_backend": trace_evidence.backend if trace_evidence else None,
+            },
+            "trace_query_time_ms": trace_evidence.query_time_ms if trace_evidence else None,
         }},
     )
     verdict_link(corr_verdict, context=[trigger_verdict_id])
     verdict_store.put(corr_verdict)
+
+    # Write content-addressed decision record
+    if decision_store_path:
+        from nthlayer_common.records.sqlite_store import SQLiteDecisionRecordStore
+        from nthlayer_common.records.verdict_bridge import write_decision_verdict
+
+        ds = SQLiteDecisionRecordStore(decision_store_path)
+        write_decision_verdict(
+            ds,
+            agent="correlate",
+            incident_id=getattr(corr_verdict.subject, "ref", "") or trigger_service,
+            timestamp=corr_verdict.timestamp,
+            model=reasoning_model or os.environ.get("NTHLAYER_MODEL", "heuristic"),
+            reasoning=getattr(corr_verdict.judgment, "reasoning", "") or verdict_summary,
+            action={
+                "root_causes": root_causes[:3],
+                "blast_radius_count": len(blast_list),
+                "trace_backend": trace_evidence.backend if trace_evidence else None,
+                "trace_services_count": len(trace_evidence.services) if trace_evidence else 0,
+            },
+            prompt_text=f"correlate {trigger_service} mode={reasoning_mode}",
+            response_text=str(reasoning_result) if reasoning_result else "heuristic",
+            summaries_technical=(
+                f"Correlation: {trigger_service}, {len(groups)} groups, {len(blast_list)} blast radius"
+                + (f", trace evidence from {trace_evidence.backend}" if trace_evidence else "")
+            ),
+            summaries_plain=verdict_summary[:280],
+            summaries_executive=(
+                f"{trigger_service} correlation — {reasoning_mode}"
+                + (" + traces" if trace_evidence else "")
+            ),
+        )
 
     # Slack notification for correlation verdict
     slack_url = os.environ.get("SLACK_WEBHOOK_URL", "")
@@ -662,8 +741,8 @@ def correlate_command(
     return 0
 
 
-def main() -> None:
-    """CLI entry point."""
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="nthlayer-correlate",
         description="SitRep — Situational awareness through automated signal correlation",
@@ -707,7 +786,18 @@ def main() -> None:
     corr_parser.add_argument("--model", default=None, help="Model for reasoning (e.g. 'openai/gpt-4o', 'anthropic/claude-sonnet-4-20250514')")
     # Forward flags for downstream components (passed through, not parsed by correlate)
     corr_parser.add_argument("--respond-args", default=None, help="JSON-encoded args to forward to nthlayer-respond")
+    corr_parser.add_argument("--decision-store", default=None, help="Path to decision record SQLite DB for content-addressed records")
+    # Trace backend flags
+    corr_parser.add_argument("--trace-backend", default=None, choices=["tempo"], help="Trace backend to query for evidence (e.g. 'tempo')")
+    corr_parser.add_argument("--tempo-endpoint", default=None, help="Tempo query endpoint (e.g. 'http://tempo:3200')")
+    corr_parser.add_argument("--trace-detail", default="full", choices=["summary", "full"], help="Trace evidence detail level")
 
+    return parser
+
+
+def main() -> None:
+    """CLI entry point."""
+    parser = _build_parser()
     args = parser.parse_args()
 
     if args.command is None:
@@ -729,6 +819,15 @@ def main() -> None:
                 )
             )
     elif args.command == "correlate":
+        # Construct trace backend if requested
+        _trace_backend = None
+        if args.trace_backend == "tempo":
+            from nthlayer_correlate.traces.tempo import TempoTraceBackend
+            _trace_backend = TempoTraceBackend(
+                endpoint=args.tempo_endpoint,
+                use_service_graphs=True,
+            )
+
         sys.exit(
             correlate_command(
                 trigger_verdict_id=args.trigger_verdict,
@@ -738,6 +837,8 @@ def main() -> None:
                 respond_args=args.respond_args,
                 reasoning=not args.no_reasoning,
                 reasoning_model=args.model,
+                decision_store_path=getattr(args, "decision_store", None),
+                trace_backend=_trace_backend,
             )
         )
 

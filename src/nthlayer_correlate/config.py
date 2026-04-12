@@ -26,6 +26,14 @@ class SitRepConfig:
     alert_interval: int = 60
     incident_interval: int = 30
     degraded_interval: int = 120
+    # Trace backend configuration
+    trace_backend: str | None = None
+    trace_detail: str = "full"
+    trace_baseline_window: str = "1h"
+    tempo_endpoint: str = "http://localhost:3200"
+    tempo_org_id: str = ""
+    tempo_timeout: int = 30
+    tempo_use_service_graphs: bool = True
 
 
 def load_config(path: str | None = None) -> SitRepConfig:
@@ -81,5 +89,23 @@ def load_config(path: str | None = None) -> SitRepConfig:
         short_key = key.replace("_seconds", "")
         if key in state:
             kwargs[short_key] = state[key]
+
+    traces = data.get("traces", {})
+    if "backend" in traces:
+        kwargs["trace_backend"] = traces["backend"]
+    if "detail" in traces:
+        kwargs["trace_detail"] = traces["detail"]
+    if "baseline_window" in traces:
+        kwargs["trace_baseline_window"] = traces["baseline_window"]
+
+    tempo = traces.get("tempo", {})
+    if "endpoint" in tempo:
+        kwargs["tempo_endpoint"] = tempo["endpoint"]
+    if "org_id" in tempo:
+        kwargs["tempo_org_id"] = tempo["org_id"]
+    if "timeout_seconds" in tempo:
+        kwargs["tempo_timeout"] = tempo["timeout_seconds"]
+    if "use_service_graphs" in tempo:
+        kwargs["tempo_use_service_graphs"] = tempo["use_service_graphs"]
 
     return SitRepConfig(**kwargs)
