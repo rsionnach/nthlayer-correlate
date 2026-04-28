@@ -796,7 +796,34 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI entry point — deprecated, emits migration message and exits.
+
+    This package was deprecated in v1.0.0. The CLI binary `nthlayer-correlate`
+    no longer dispatches to the legacy commands (serve/status/replay/correlate);
+    invoking it now prints a migration message and exits with status 1 so
+    operators discover the move quickly.
+
+    The legacy command implementations (`serve_command`, `status_command`,
+    `replay_command`, `correlate_command`) remain in this module for any
+    consumer that imports them directly — they are not removed in this
+    deprecation release. Library imports continue to function (with a
+    DeprecationWarning emitted on package import).
+    """
+    print(
+        "nthlayer-correlate has been deprecated.\n"
+        "The functionality moved to nthlayer-workers as of v1.5\n"
+        "(correlate modules: CorrelateSessionModule, CorrelateTopologyModule,\n"
+        "CorrelateContractModule).\n"
+        "\n"
+        "Install: pip install nthlayer-workers\n"
+        "Migration details: https://github.com/rsionnach/nthlayer-correlate\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _legacy_main_kept_for_reference() -> None:
+    """Pre-deprecation main() — preserved for reference; not wired."""
     parser = _build_parser()
     args = parser.parse_args()
 
